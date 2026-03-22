@@ -30,20 +30,22 @@ const server = http.createServer(app);
 connectDB();
 
 // Enhanced CORS configuration
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5000',
+  'https://unified-ide-frontend.onrender.com',
+  'https://unified-ide-backend.onrender.com'
+];
+
 const corsOptions = {
   origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl)
     if (!origin) return callback(null, true);
     
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'http://localhost:5000',
-      'http://127.0.0.1:3000',
-      'http://127.0.0.1:5000'
-    ];
-    
-    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
+    if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
+      console.log('❌ Blocked origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -53,7 +55,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json());
 
 // Configure Socket.IO
 const io = socketIo(server, {
