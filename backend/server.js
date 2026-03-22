@@ -10,6 +10,7 @@ const Project = require('./models/Project');
 const { auth } = require('./middleware/auth');
 const authController = require('./controllers/authController');
 const codeExecutionService = require('./services/codeExecutionService');
+const geminiService = require('./services/geminiService');
 const { OperationalTransform, Operation } = require('./utils/ot');
 
 const app = express();
@@ -74,6 +75,8 @@ class Document {
     this.operations = [];
     this.otEngine = new OperationalTransform();
     this.clientStates = new Map();
+    this.files = new Map(); // For multi-file support
+    this.currentFile = 'main.js';
   }
 
   applyOperation(operation, clientId) {
@@ -156,6 +159,31 @@ class Document {
     this.language = language;
     return this.language;
   }
+
+  // File system methods
+  createFile(fileName, content = '') {
+    this.files.set(fileName, content);
+    return Array.from(this.files.keys());
+  }
+
+  switchFile(fileName) {
+    if (this.files.has(fileName)) {
+      this.content = this.files.get(fileName);
+      this.currentFile = fileName;
+    }
+    return { content: this.content, fileName: this.currentFile };
+  }
+
+  updateFileContent(fileName, content) {
+    this.files.set(fileName, content);
+    if (this.currentFile === fileName) {
+      this.content = content;
+    }
+  }
+
+  getFiles() {
+    return Array.from(this.files.keys());
+  }
 }
 
 const activeSessions = new Map();
@@ -219,7 +247,9 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
-// AI Routes
+// ===== AI ROUTES - REAL GEMINI AI =====
+
+// AI Code Generation
 app.post('/api/ai/generate', async (req, res) => {
   try {
     const { prompt, language, context } = req.body;
@@ -227,32 +257,24 @@ app.post('/api/ai/generate', async (req, res) => {
     if (!prompt) {
       return res.status(400).json({ success: false, error: 'Prompt required' });
     }
+
+    console.log(`🤖 AI Generation Request: "${prompt}" (${language})`);
     
-    let response = '';
-    const langName = SUPPORTED_LANGUAGES[language]?.name || language;
+    const result = await geminiService.generateCode(prompt, language, context);
     
-    if (language === 'javascript') {
-      response = `// ${prompt}\n\nfunction solution() {\n  // Your code here\n  console.log("Result");\n  return "Success";\n}\n\nsolution();`;
-    } else if (language === 'python') {
-      response = `# ${prompt}\n\ndef solution():\n    # Your code here\n    print("Result")\n    return "Success"\n\nsolution()`;
-    } else if (language === 'c') {
-      response = `// ${prompt}\n\n#include <stdio.h>\n\nint main() {\n    // Your code here\n    printf("Result\\n");\n    return 0;\n}`;
-    } else if (language === 'cpp') {
-      response = `// ${prompt}\n\n#include <iostream>\nusing namespace std;\n\nint main() {\n    // Your code here\n    cout << "Result" << endl;\n    return 0;\n}`;
-    } else if (language === 'java') {
-      response = `// ${prompt}\n\npublic class Main {\n    public static void main(String[] args) {\n        // Your code here\n        System.out.println("Result");\n    }\n}`;
-    } else {
-      response = `// ${prompt}\n\n// Write your ${langName} code here\nconsole.log("Hello World");`;
-    }
-    
-    res.json({ success: true, code: response });
+    res.json(result);
     
   } catch (error) {
-    console.error('AI error:', error);
-    res.json({ success: false, error: error.message });
+    console.error('AI generation error:', error);
+    res.json({ 
+      success: false, 
+      error: error.message,
+      code: `// AI Error: ${error.message}\n\n// Please check your GEMINI_API_KEY in environment variables`
+    });
   }
 });
 
+// AI Code Analysis
 app.post('/api/ai/analyze', async (req, res) => {
   try {
     const { code, language } = req.body;
@@ -260,35 +282,19 @@ app.post('/api/ai/analyze', async (req, res) => {
     if (!code) {
       return res.status(400).json({ success: false, error: 'Code required' });
     }
-    
-    const lines = code.split('\n').length;
-    const functions = (code.match(/function|def|=>/g) || []).length;
-    const loops = (code.match(/for|while/g) || []).length;
-    const conditions = (code.match(/if|else|switch/g) || []).length;
-    
-    const analysis = `📊 Code Analysis Results
 
-Language: ${SUPPORTED_LANGUAGES[language]?.name || language}
-Lines of Code: ${lines}
-Functions/Methods: ${functions}
-Loops: ${loops}
-Conditions: ${conditions}
-
-💡 Suggestions:
-1. ${lines > 100 ? 'Consider breaking into smaller files' : 'Good file size'}
-2. ${functions === 0 ? 'Add more functions for better organization' : 'Function usage looks good'}
-3. ${loops > 5 ? 'Consider optimizing loops' : 'Loop usage is reasonable'}
-4. Add comments for complex logic
-5. Use meaningful variable names
-6. Consider error handling for edge cases
-
-✅ Overall: ${lines < 200 ? 'Good' : 'Consider refactoring'} code structure`;
+    console.log(`🔍 AI Analysis Request: ${language} (${code.length} chars)`);
     
-    res.json({ success: true, analysis });
+    const result = await geminiService.analyzeCode(code, language);
+    
+    res.json(result);
     
   } catch (error) {
     console.error('Analysis error:', error);
-    res.json({ success: false, error: error.message });
+    res.json({ 
+      success: false, 
+      analysis: `Analysis failed: ${error.message}\n\nPlease check your API key.` 
+    });
   }
 });
 
@@ -362,7 +368,9 @@ io.on('connection', (socket) => {
       
       let session = activeSessions.get(roomId);
       if (!session) {
-        session = new Document('// Start coding here...\n\nconsole.log("Hello World!");', 'javascript');
+        const defaultCode = '// Start coding here...\n\nconsole.log("Hello World!");';
+        session = new Document(defaultCode, 'javascript');
+        session.files.set('main.js', defaultCode);
         activeSessions.set(roomId, session);
         console.log(`📝 Created new session for room ${roomId}`);
       }
@@ -381,6 +389,7 @@ io.on('connection', (socket) => {
       
       const state = session.getState();
       socket.emit('document-state', state);
+      socket.emit('files-list', session.getFiles());
       
       const users = Array.from(roomUsers.values());
       io.to(roomId).emit('users-update', users);
@@ -401,6 +410,24 @@ io.on('connection', (socket) => {
     }
   });
 
+  // File system events
+  socket.on('file-create', ({ roomId, fileName }) => {
+    const session = activeSessions.get(roomId);
+    if (session) {
+      const files = session.createFile(fileName);
+      io.to(roomId).emit('files-list', files);
+    }
+  });
+
+  socket.on('file-switch', ({ roomId, fileName }) => {
+    const session = activeSessions.get(roomId);
+    if (session) {
+      const { content, fileName: currentFile } = session.switchFile(fileName);
+      socket.emit('file-content', { content, fileName: currentFile });
+      socket.to(roomId).emit('user-switched-file', { username: socket.username, fileName });
+    }
+  });
+
   socket.on('cursor-update', (position, roomId) => {
     if (!roomId || position === undefined) return;
     const session = activeSessions.get(roomId);
@@ -416,6 +443,9 @@ io.on('connection', (socket) => {
     if (session) {
       const result = session.applyOperation(operation, socket.id);
       if (result) {
+        // Update file content in the file system
+        session.updateFileContent(session.currentFile, result.content);
+        
         socket.to(roomId).emit('code-update', {
           operation: result.operation,
           content: result.content,
@@ -489,6 +519,7 @@ server.listen(PORT, HOST, () => {
   console.log(`🗄️  MongoDB: ✅ Connected`);
   console.log(`🔄 OT Algorithm: ✅ Enabled`);
   console.log(`🔐 JWT Auth: ✅ Enabled`);
-  console.log(`🤖 AI Routes: ✅ Ready`);
+  console.log(`🤖 Gemini AI: ${process.env.GEMINI_API_KEY ? '✅ Ready' : '❌ No API Key'}`);
+  console.log(`⚡ Code Execution: ${process.env.JDOODLE_CLIENT_ID ? '✅ JDoodle Ready' : '⚠️  JDoodle not configured'}`);
   console.log('='.repeat(50));
 });
