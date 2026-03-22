@@ -491,6 +491,7 @@ body {
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
+  position: relative;
 }
 
 .online-users-toggle {
@@ -510,7 +511,7 @@ body {
   border-color: #00d4aa;
 }
 
-/* Language Selector - FIXED Z-INDEX */
+/* Language Selector – fixed z-index */
 .language-selector {
   position: relative;
   z-index: 1000;
@@ -534,14 +535,13 @@ body {
   top: 100%;
   left: 0;
   margin-top: 4px;
-  background: rgba(40, 40, 40, 0.98);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: #2d2d2d;
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 8px;
   width: 160px;
   max-height: 300px;
   overflow-y: auto;
   z-index: 1001;
-  backdrop-filter: blur(20px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 
@@ -713,22 +713,23 @@ body {
 
 .sidebar-toggle-btn {
   position: absolute;
-  top: 10px;
-  right: 10px;
-  background: rgba(255, 255, 255, 0.05);
+  top: 12px;
+  right: 12px;
+  background: rgba(255, 255, 255, 0.1);
   border: none;
-  color: #ccc;
-  cursor: pointer;
-  padding: 6px;
   border-radius: 4px;
-  z-index: 10;
+  padding: 4px;
+  cursor: pointer;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: center;
+  color: #ccc;
 }
 
 .sidebar-toggle-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
 }
 
 .sidebar-section {
@@ -837,23 +838,16 @@ body {
   border-radius: 4px;
 }
 
-/* Terminal */
+/* Terminal Component (combined) */
 .terminal-output {
   background: #1e1e1e;
-  font-family: monospace;
-  font-size: 11px;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  padding: 10px;
-  border-radius: 6px;
-  max-height: 200px;
+  color: #d4d4d4;
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  padding: 8px;
+  border-radius: 4px;
+  max-height: 300px;
   overflow-y: auto;
-  color: #00ff00;
-  border: 1px solid rgba(0, 255, 0, 0.1);
-}
-
-.terminal-output pre {
-  margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
 }

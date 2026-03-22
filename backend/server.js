@@ -1,8 +1,8 @@
-const axios = require('axios');
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
+const axios = require('axios'); // added
 require('dotenv').config();
 
 const connectDB = require('./config/database');
@@ -217,7 +217,7 @@ app.post('/api/ai/generate', async (req, res) => {
     
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     if (!GEMINI_API_KEY) {
-      return res.json({ success: false, error: 'Gemini API key not configured', code: '// AI Error: API key missing\n// Add GEMINI_API_KEY to environment variables' });
+      return res.json({ success: false, error: 'Gemini API key not configured', code: '// AI Error: API key missing' });
     }
     
     const fullPrompt = `You are a professional programmer. Generate ONLY the code, no explanations.
@@ -237,7 +237,7 @@ Rules: Return ONLY the code, no markdown, no backticks, no explanations. Make it
     
   } catch (error) {
     console.error('AI error:', error.message);
-    res.json({ success: false, error: error.message, code: `// AI Error: ${error.message}\n// Check your Gemini API key` });
+    res.json({ success: false, error: error.message, code: `// AI Error: ${error.message}` });
   }
 });
 
@@ -312,7 +312,8 @@ io.on('connection', (socket) => {
       
       let session = activeSessions.get(roomId);
       if (!session) {
-        session = new Document('// Start coding here...\n\nconsole.log("Hello World!");', 'javascript');
+        // Remove the extra console.log; keep it simple
+        session = new Document('// Start coding here...', 'javascript');
         activeSessions.set(roomId, session);
       }
       
