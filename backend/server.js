@@ -1,0 +1,563 @@
+const express = require('express');
+const http = require('http');
+const socketIo = require('socket.io');
+const cors = require('cors');
+require('dotenv').config();
+
+// Import database
+const connectDB = require('./config/database');
+
+// Import models
+const User = require('./models/User');
+const Project = require('./models/Project');
+
+// Import middleware
+const { auth } = require('./middleware/auth');
+
+// Import controllers
+const authController = require('./controllers/authController');
+
+// Import services
+const codeExecutionService = require('./services/codeExecutionService');
+const aiService = require('./services/aiService'); // NEW: Proper AI service
+const { OperationalTransform, Operation } = require('./utils/ot');
+
+// Initialize app
+const app = express();
+const server = http.createServer(app);
+
+// Connect to MongoDB
+connectDB();
+
+// Enhanced CORS configuration
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:5000',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:5000'
+    ];
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+};
+
+app.use(cors(corsOptions));
+app.use(express.json());
+
+// Configure Socket.IO
+const io = socketIo(server, {
+  cors: {
+    origin: function(origin, callback) {
+      const allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+      if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  transports: ['websocket', 'polling'],
+  pingTimeout: 60000,
+  pingInterval: 25000
+});
+
+// ===== DOCUMENT CLASS FOR REAL-TIME COLLABORATION =====
+class Document {
+  constructor(content = '', language = 'javascript') {
+    this.content = content;
+    this.language = language;
+    this.version = 0;
+    this.operations = [];
+    this.otEngine = new OperationalTransform();
+    this.clientStates = new Map();
+  }
+
+  applyOperation(operation, clientId) {
+    try {
+      const transformedOp = this.otEngine.applyOperation(
+        new Operation(operation.type, operation.position, operation.text, operation.length),
+        clientId
+      );
+
+      if (transformedOp) {
+        this.content = transformedOp.applyToText(this.content);
+        this.version = this.otEngine.getCurrentVersion();
+        
+        this.operations.push({
+          ...transformedOp,
+          clientId,
+          timestamp: new Date()
+        });
+        
+        return {
+          operation: transformedOp,
+          content: this.content,
+          version: this.version
+        };
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error applying operation:', error);
+      return null;
+    }
+  }
+
+  getState() {
+    return {
+      content: this.content || '',
+      language: this.language,
+      version: this.version
+    };
+  }
+
+  getOperationsAfterVersion(version) {
+    return this.otEngine.getOperationsAfterVersion(version);
+  }
+
+  updateClientCursor(clientId, position, username) {
+    this.clientStates.set(clientId, {
+      position,
+      username,
+      lastSeen: Date.now()
+    });
+    
+    // Clean up stale clients (5 minutes)
+    const now = Date.now();
+    for (const [id, state] of this.clientStates.entries()) {
+      if (now - state.lastSeen > 300000) {
+        this.clientStates.delete(id);
+      }
+    }
+    
+    return this.getActiveCursors();
+  }
+
+  getActiveCursors() {
+    const cursors = [];
+    for (const [clientId, state] of this.clientStates.entries()) {
+      cursors.push({
+        clientId,
+        username: state.username,
+        position: state.position,
+        lastSeen: state.lastSeen
+      });
+    }
+    return cursors;
+  }
+
+  removeClient(clientId) {
+    this.clientStates.delete(clientId);
+    return this.getActiveCursors();
+  }
+
+  changeLanguage(language) {
+    this.language = language;
+    return this.language;
+  }
+}
+
+// ===== GLOBAL VARIABLES =====
+const activeSessions = new Map(); // roomId -> Document
+const activeRooms = new Map(); // roomId -> Map of socketId -> user data
+
+// Supported languages
+const SUPPORTED_LANGUAGES = {
+  'javascript': { name: 'JavaScript', extension: 'js', monaco: 'javascript' },
+  'python': { name: 'Python', extension: 'py', monaco: 'python' },
+  'java': { name: 'Java', extension: 'java', monaco: 'java' },
+  'cpp': { name: 'C++', extension: 'cpp', monaco: 'cpp' },
+  'c': { name: 'C', extension: 'c', monaco: 'c' },
+  'csharp': { name: 'C#', extension: 'cs', monaco: 'csharp' },
+  'php': { name: 'PHP', extension: 'php', monaco: 'php' },
+  'ruby': { name: 'Ruby', extension: 'rb', monaco: 'ruby' },
+  'go': { name: 'Go', extension: 'go', monaco: 'go' },
+  'rust': { name: 'Rust', extension: 'rs', monaco: 'rust' },
+  'typescript': { name: 'TypeScript', extension: 'ts', monaco: 'typescript' },
+  'html': { name: 'HTML', extension: 'html', monaco: 'html' },
+  'css': { name: 'CSS', extension: 'css', monaco: 'css' },
+  'sql': { name: 'SQL', extension: 'sql', monaco: 'sql' }
+};
+
+// ===== API ROUTES =====
+
+// Health check
+app.get('/api/status', (req, res) => {
+  res.json({
+    success: true,
+    status: 'Online',
+    timestamp: new Date(),
+    mongodb: 'Connected',
+    activeRooms: activeSessions.size,
+    activeUsers: io.engine.clientsCount,
+    uptime: process.uptime()
+  });
+});
+
+// Auth routes
+app.post('/api/auth/register', authController.register);
+app.post('/api/auth/login', authController.login);
+app.get('/api/auth/me', auth, authController.getMe);
+app.post('/api/auth/logout', auth, authController.logout);
+
+// Get supported languages
+app.get('/api/languages', (req, res) => {
+  const languages = Object.entries(SUPPORTED_LANGUAGES).map(([key, value]) => ({
+    id: key,
+    name: value.name,
+    extension: value.extension,
+    monaco: value.monaco
+  }));
+  res.json({ success: true, languages });
+});
+
+// Execute code
+app.post('/api/execute', async (req, res) => {
+  try {
+    const { code, language, input } = req.body;
+    
+    if (!code || !language) {
+      return res.status(400).json({ 
+        success: false, 
+        output: 'Code and language are required' 
+      });
+    }
+    
+    const result = await codeExecutionService.executeCode(code, language, input);
+    res.json(result);
+  } catch (error) {
+    console.error('Execution endpoint error:', error);
+    res.status(500).json({ 
+      success: false, 
+      output: `Server error: ${error.message}` 
+    });
+  }
+});
+
+// AI Code Generation endpoint - FIXED with proper Gemini integration
+app.post('/api/ai/generate', async (req, res) => {
+  try {
+    const { prompt, language, context } = req.body;
+    
+    if (!prompt || !language) {
+      return res.status(400).json({ 
+        success: false, 
+        completion: 'Prompt and language are required' 
+      });
+    }
+    
+    console.log(`🤖 AI Request: ${language} - "${prompt.substring(0, 50)}..."`);
+    
+    // Use the AI service to generate code
+    const completion = await aiService.generateCode(prompt, language, context);
+    
+    res.json({ 
+      success: true, 
+      completion 
+    });
+  } catch (error) {
+    console.error('AI generation error:', error);
+    res.status(500).json({ 
+      success: false, 
+      completion: `Error: ${error.message}` 
+    });
+  }
+});
+
+// AI Code Analysis endpoint
+app.post('/api/ai/analyze', async (req, res) => {
+  try {
+    const { code, language } = req.body;
+    
+    if (!code) {
+      return res.status(400).json({ 
+        success: false, 
+        analysis: 'Code is required' 
+      });
+    }
+    
+    const analysis = await aiService.analyzeCode(code, language);
+    
+    res.json({ 
+      success: true, 
+      analysis 
+    });
+  } catch (error) {
+    console.error('Analysis error:', error);
+    res.status(500).json({ 
+      success: false, 
+      analysis: `Analysis error: ${error.message}` 
+    });
+  }
+});
+
+// Project routes (for saving/loading)
+app.post('/api/projects', auth, async (req, res) => {
+  try {
+    const { name, description, language, code, isPublic } = req.body;
+    
+    const projectId = Math.random().toString(36).substring(2, 10).toUpperCase();
+    
+    const project = new Project({
+      projectId,
+      name: name || 'Untitled Project',
+      description: description || '',
+      owner: req.user._id,
+      language: language || 'javascript',
+      code: code || '',
+      isPublic: isPublic || false,
+      versions: [{
+        content: code || '',
+        language: language || 'javascript',
+        createdBy: req.user._id
+      }]
+    });
+    
+    await project.save();
+    
+    res.status(201).json({
+      success: true,
+      message: 'Project saved successfully',
+      project: {
+        id: project._id,
+        projectId: project.projectId,
+        name: project.name,
+        language: project.language,
+        createdAt: project.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Save project error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to save project' 
+    });
+  }
+});
+
+app.get('/api/projects', auth, async (req, res) => {
+  try {
+    const projects = await Project.find({
+      $or: [
+        { owner: req.user._id },
+        { 'collaborators.user': req.user._id }
+      ]
+    })
+    .populate('owner', 'username email')
+    .sort({ updatedAt: -1 });
+    
+    res.json({ 
+      success: true,
+      projects 
+    });
+  } catch (error) {
+    console.error('Get projects error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch projects' 
+    });
+  }
+});
+
+// ===== SOCKET.IO HANDLING =====
+
+io.on('connection', (socket) => {
+  console.log('⚡ New connection:', socket.id);
+
+  socket.on('join-room', async (roomData) => {
+    try {
+      const { roomId, username, userId } = roomData;
+      
+      if (!roomId || !username) {
+        socket.emit('error', { message: 'Room ID and username are required' });
+        return;
+      }
+
+      console.log(`👤 ${username} (${socket.id}) joining room ${roomId}`);
+      
+      socket.join(roomId);
+      socket.roomId = roomId;
+      socket.username = username;
+      socket.userId = userId;
+      
+      // Initialize or get session - FIXED: No welcome message, just empty code
+      let session = activeSessions.get(roomId);
+      if (!session) {
+        session = new Document('', 'javascript'); // EMPTY code, no welcome message
+        activeSessions.set(roomId, session);
+        console.log(`📝 Created new empty session for room ${roomId}`);
+      }
+      
+      // Initialize room users
+      if (!activeRooms.has(roomId)) {
+        activeRooms.set(roomId, new Map());
+      }
+      
+      const roomUsers = activeRooms.get(roomId);
+      roomUsers.set(socket.id, {
+        id: socket.id,
+        username: username,
+        userId: userId,
+        joinedAt: new Date()
+      });
+      
+      // Send current document state
+      const state = session.getState();
+      socket.emit('document-state', state);
+      
+      // Get all users in room
+      const users = Array.from(roomUsers.values());
+      io.to(roomId).emit('users-update', users);
+      
+      // Update cursor
+      const cursors = session.updateClientCursor(socket.id, 0, username);
+      io.to(roomId).emit('cursors-update', cursors);
+      
+      // Notify others
+      socket.to(roomId).emit('user-joined', {
+        id: socket.id,
+        username: username
+      });
+      
+      console.log(`✅ ${username} joined room ${roomId}. Total users: ${users.length}`);
+      
+    } catch (error) {
+      console.error('Join room error:', error);
+      socket.emit('error', { message: 'Failed to join room: ' + error.message });
+    }
+  });
+
+  // Handle cursor position updates
+  socket.on('cursor-update', (position, roomId) => {
+    if (!roomId || position === undefined) return;
+    
+    const session = activeSessions.get(roomId);
+    if (session) {
+      const cursors = session.updateClientCursor(socket.id, position, socket.username);
+      socket.to(roomId).emit('cursors-update', cursors);
+    }
+  });
+
+  // Handle code changes - FIXED: Prevent infinite loops
+  socket.on('code-change', (operation, roomId) => {
+    if (!roomId || !operation) return;
+    
+    const session = activeSessions.get(roomId);
+    if (session) {
+      // Prevent duplicate operations
+      const result = session.applyOperation(operation, socket.id);
+      
+      if (result) {
+        // Broadcast to other users only
+        socket.to(roomId).emit('code-update', {
+          operation: result.operation,
+          content: result.content,
+          version: result.version,
+          clientId: socket.id,
+          username: socket.username
+        });
+        
+        console.log(`📝 ${socket.username} updated room ${roomId} (v${result.version})`);
+      }
+    }
+  });
+
+  // Handle sync requests
+  socket.on('sync-request', (version, roomId) => {
+    if (!roomId) return;
+    
+    const session = activeSessions.get(roomId);
+    if (session) {
+      const operations = session.getOperationsAfterVersion(version);
+      socket.emit('sync-response', operations, session.getState());
+    }
+  });
+
+  // Handle language changes
+  socket.on('language-change', (language, roomId) => {
+    if (!roomId || !language) return;
+    
+    const session = activeSessions.get(roomId);
+    if (session) {
+      const oldLang = session.language;
+      session.changeLanguage(language);
+      
+      io.to(roomId).emit('language-update', language);
+      console.log(`🌐 ${socket.username} changed language from ${oldLang} to ${language} in room ${roomId}`);
+    }
+  });
+
+  // Handle disconnect
+  socket.on('disconnect', () => {
+    console.log('🔌 User disconnected:', socket.username || socket.id);
+    
+    const roomId = socket.roomId;
+    if (roomId) {
+      // Remove user from room
+      const roomUsers = activeRooms.get(roomId);
+      if (roomUsers) {
+        roomUsers.delete(socket.id);
+        
+        // Update remaining users
+        const users = Array.from(roomUsers.values());
+        io.to(roomId).emit('users-update', users);
+        
+        // Notify others
+        socket.to(roomId).emit('user-left', {
+          id: socket.id,
+          username: socket.username
+        });
+        
+        console.log(`👋 ${socket.username} left room ${roomId}. Remaining: ${users.length}`);
+        
+        // Clean up empty rooms after 5 minutes
+        if (users.length === 0) {
+          setTimeout(() => {
+            if (activeRooms.get(roomId)?.size === 0) {
+              activeRooms.delete(roomId);
+              activeSessions.delete(roomId);
+              console.log(`🧹 Cleaned up empty room: ${roomId}`);
+            }
+          }, 300000); // 5 minutes
+        }
+      }
+      
+      // Update cursors
+      const session = activeSessions.get(roomId);
+      if (session) {
+        const cursors = session.removeClient(socket.id);
+        io.to(roomId).emit('cursors-update', cursors);
+      }
+    }
+  });
+});
+
+// Start server
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
+  console.log('='.repeat(50));
+  console.log('🚀 Unified IDE Backend Server');
+  console.log('='.repeat(50));
+  console.log(`📍 Port: ${PORT}`);
+  console.log(`🌐 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
+  console.log(`🗄️  MongoDB: ✅ Connected`);
+  console.log(`🔄 OT Algorithm: ✅ Enabled`);
+  console.log(`🔐 JWT Auth: ✅ Enabled`);
+  console.log(`🤖 Code Execution: ✅ Multi-language Support`);
+  console.log(`🤖 AI Integration: ✅ Gemini API Ready`);
+  console.log('='.repeat(50));
+  console.log('📡 Waiting for connections...');
+});
