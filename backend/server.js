@@ -1,3 +1,4 @@
+const axios = require('axios');
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -10,7 +11,6 @@ const Project = require('./models/Project');
 const { auth } = require('./middleware/auth');
 const authController = require('./controllers/authController');
 const codeExecutionService = require('./services/codeExecutionService');
-const geminiService = require('./services/geminiService');
 const { OperationalTransform, Operation } = require('./utils/ot');
 
 const app = express();
@@ -48,9 +48,6 @@ app.use(express.urlencoded({ extended: true }));
 // Debug middleware
 app.use((req, res, next) => {
   console.log(`📨 ${req.method} ${req.path}`);
-  if (req.body && Object.keys(req.body).length > 0) {
-    console.log('📦 Body:', req.body);
-  }
   next();
 });
 
@@ -66,7 +63,7 @@ const io = socketIo(server, {
   pingInterval: 25000
 });
 
-// Document Class
+// Document Class with File System
 class Document {
   constructor(content = '', language = 'javascript') {
     this.content = content;
@@ -75,8 +72,9 @@ class Document {
     this.operations = [];
     this.otEngine = new OperationalTransform();
     this.clientStates = new Map();
-    this.files = new Map(); // For multi-file support
+    this.files = new Map();
     this.currentFile = 'main.js';
+    this.files.set('main.js', content);
   }
 
   applyOperation(operation, clientId) {
@@ -89,18 +87,9 @@ class Document {
       if (transformedOp) {
         this.content = transformedOp.applyToText(this.content);
         this.version = this.otEngine.getCurrentVersion();
-        
-        this.operations.push({
-          ...transformedOp,
-          clientId,
-          timestamp: new Date()
-        });
-        
-        return {
-          operation: transformedOp,
-          content: this.content,
-          version: this.version
-        };
+        this.operations.push({ ...transformedOp, clientId, timestamp: new Date() });
+        this.files.set(this.currentFile, this.content);
+        return { operation: transformedOp, content: this.content, version: this.version };
       }
       return null;
     } catch (error) {
@@ -110,11 +99,7 @@ class Document {
   }
 
   getState() {
-    return {
-      content: this.content,
-      language: this.language,
-      version: this.version
-    };
+    return { content: this.content, language: this.language, version: this.version };
   }
 
   getOperationsAfterVersion(version) {
@@ -122,17 +107,10 @@ class Document {
   }
 
   updateClientCursor(clientId, position, username) {
-    this.clientStates.set(clientId, {
-      position,
-      username,
-      lastSeen: Date.now()
-    });
-    
+    this.clientStates.set(clientId, { position, username, lastSeen: Date.now() });
     const now = Date.now();
     for (const [id, state] of this.clientStates.entries()) {
-      if (now - state.lastSeen > 300000) {
-        this.clientStates.delete(id);
-      }
+      if (now - state.lastSeen > 300000) this.clientStates.delete(id);
     }
     return this.getActiveCursors();
   }
@@ -140,12 +118,7 @@ class Document {
   getActiveCursors() {
     const cursors = [];
     for (const [clientId, state] of this.clientStates.entries()) {
-      cursors.push({
-        clientId,
-        username: state.username,
-        position: state.position,
-        lastSeen: state.lastSeen
-      });
+      cursors.push({ clientId, username: state.username, position: state.position, lastSeen: state.lastSeen });
     }
     return cursors;
   }
@@ -160,9 +133,10 @@ class Document {
     return this.language;
   }
 
-  // File system methods
   createFile(fileName, content = '') {
-    this.files.set(fileName, content);
+    if (!this.files.has(fileName)) {
+      this.files.set(fileName, content);
+    }
     return Array.from(this.files.keys());
   }
 
@@ -189,7 +163,6 @@ class Document {
 const activeSessions = new Map();
 const activeRooms = new Map();
 
-// Supported languages
 const SUPPORTED_LANGUAGES = {
   'javascript': { name: 'JavaScript', extension: 'js' },
   'python': { name: 'Python', extension: 'py' },
@@ -209,14 +182,7 @@ const SUPPORTED_LANGUAGES = {
 // ===== API ROUTES =====
 
 app.get('/api/status', (req, res) => {
-  res.json({
-    success: true,
-    status: 'Online',
-    timestamp: new Date(),
-    activeRooms: activeSessions.size,
-    activeUsers: io.engine.clientsCount,
-    uptime: process.uptime()
-  });
+  res.json({ success: true, status: 'Online', timestamp: new Date(), activeRooms: activeSessions.size, activeUsers: io.engine.clientsCount });
 });
 
 app.post('/api/auth/register', authController.register);
@@ -225,20 +191,14 @@ app.get('/api/auth/me', auth, authController.getMe);
 app.post('/api/auth/logout', auth, authController.logout);
 
 app.get('/api/languages', (req, res) => {
-  const languages = Object.entries(SUPPORTED_LANGUAGES).map(([key, value]) => ({
-    id: key,
-    name: value.name,
-    extension: value.extension
-  }));
+  const languages = Object.entries(SUPPORTED_LANGUAGES).map(([key, value]) => ({ id: key, name: value.name, extension: value.extension }));
   res.json({ success: true, languages });
 });
 
 app.post('/api/execute', async (req, res) => {
   try {
     const { code, language, input } = req.body;
-    if (!code || !language) {
-      return res.status(400).json({ success: false, output: 'Code and language required' });
-    }
+    if (!code || !language) return res.status(400).json({ success: false, output: 'Code and language required' });
     const result = await codeExecutionService.executeCode(code, language, input);
     res.json(result);
   } catch (error) {
@@ -247,85 +207,78 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
-// ===== AI ROUTES - REAL GEMINI AI =====
-
-// AI Code Generation
+// AI Routes using Gemini
 app.post('/api/ai/generate', async (req, res) => {
   try {
     const { prompt, language, context } = req.body;
+    if (!prompt) return res.status(400).json({ success: false, error: 'Prompt required' });
     
-    if (!prompt) {
-      return res.status(400).json({ success: false, error: 'Prompt required' });
+    console.log(`🤖 AI Generation: "${prompt}" (${language})`);
+    
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_API_KEY) {
+      return res.json({ success: false, error: 'Gemini API key not configured', code: '// AI Error: API key missing\n// Add GEMINI_API_KEY to environment variables' });
     }
+    
+    const fullPrompt = `You are a professional programmer. Generate ONLY the code, no explanations.
+Language: ${language}
+User Request: ${prompt}
+Rules: Return ONLY the code, no markdown, no backticks, no explanations. Make it complete and runnable.`;
 
-    console.log(`🤖 AI Generation Request: "${prompt}" (${language})`);
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
+      { contents: [{ parts: [{ text: fullPrompt }] }] },
+      { timeout: 30000 }
+    );
     
-    const result = await geminiService.generateCode(prompt, language, context);
-    
-    res.json(result);
+    let generatedCode = response.data.candidates[0].content.parts[0].text;
+    generatedCode = generatedCode.replace(/```\w*\n/g, '').replace(/```/g, '').trim();
+    res.json({ success: true, code: generatedCode });
     
   } catch (error) {
-    console.error('AI generation error:', error);
-    res.json({ 
-      success: false, 
-      error: error.message,
-      code: `// AI Error: ${error.message}\n\n// Please check your GEMINI_API_KEY in environment variables`
-    });
+    console.error('AI error:', error.message);
+    res.json({ success: false, error: error.message, code: `// AI Error: ${error.message}\n// Check your Gemini API key` });
   }
 });
 
-// AI Code Analysis
 app.post('/api/ai/analyze', async (req, res) => {
   try {
     const { code, language } = req.body;
+    if (!code) return res.status(400).json({ success: false, error: 'Code required' });
     
-    if (!code) {
-      return res.status(400).json({ success: false, error: 'Code required' });
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_API_KEY) {
+      return res.json({ success: false, analysis: 'Gemini API key not configured' });
     }
+    
+    const prompt = `Analyze this ${language} code and provide a detailed review. Be specific and critical.
+Code:
+${code}
+Provide: Bugs found, code quality (1-10), security concerns, performance suggestions, specific improvements.`;
 
-    console.log(`🔍 AI Analysis Request: ${language} (${code.length} chars)`);
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
+      { contents: [{ parts: [{ text: prompt }] }] },
+      { timeout: 30000 }
+    );
     
-    const result = await geminiService.analyzeCode(code, language);
-    
-    res.json(result);
+    let analysis = response.data.candidates[0].content.parts[0].text;
+    analysis = analysis.trim();
+    res.json({ success: true, analysis });
     
   } catch (error) {
-    console.error('Analysis error:', error);
-    res.json({ 
-      success: false, 
-      analysis: `Analysis failed: ${error.message}\n\nPlease check your API key.` 
-    });
+    console.error('Analysis error:', error.message);
+    res.json({ success: false, analysis: `Analysis failed: ${error.message}` });
   }
 });
 
-// Project routes
 app.post('/api/projects', auth, async (req, res) => {
   try {
     const { name, description, language, code, isPublic } = req.body;
     const projectId = Math.random().toString(36).substring(2, 10).toUpperCase();
-    
-    const project = new Project({
-      projectId,
-      name: name || 'Untitled Project',
-      description: description || '',
-      owner: req.user._id,
-      language: language || 'javascript',
-      code: code || '',
-      isPublic: isPublic || false,
-      versions: [{
-        content: code || '',
-        language: language || 'javascript',
-        createdBy: req.user._id
-      }]
-    });
-    
+    const project = new Project({ projectId, name: name || 'Untitled', description: description || '', owner: req.user._id, language: language || 'javascript', code: code || '', isPublic: isPublic || false, versions: [{ content: code || '', language: language || 'javascript', createdBy: req.user._id }] });
     await project.save();
-    
-    res.status(201).json({
-      success: true,
-      message: 'Project saved',
-      project: { id: project._id, projectId: project.projectId, name: project.name }
-    });
+    res.status(201).json({ success: true, message: 'Project saved', project: { id: project._id, projectId: project.projectId, name: project.name } });
   } catch (error) {
     console.error('Save error:', error);
     res.status(500).json({ success: false, error: 'Failed to save project' });
@@ -334,13 +287,9 @@ app.post('/api/projects', auth, async (req, res) => {
 
 app.get('/api/projects', auth, async (req, res) => {
   try {
-    const projects = await Project.find({
-      $or: [{ owner: req.user._id }, { 'collaborators.user': req.user._id }]
-    }).populate('owner', 'username email').sort({ updatedAt: -1 });
-    
+    const projects = await Project.find({ $or: [{ owner: req.user._id }, { 'collaborators.user': req.user._id }] }).populate('owner', 'username email').sort({ updatedAt: -1 });
     res.json({ success: true, projects });
   } catch (error) {
-    console.error('Get projects error:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch projects' });
   }
 });
@@ -353,14 +302,9 @@ io.on('connection', (socket) => {
   socket.on('join-room', async (roomData) => {
     try {
       const { roomId, username, userId } = roomData;
-      
-      if (!roomId || !username) {
-        socket.emit('error', { message: 'Room ID and username required' });
-        return;
-      }
+      if (!roomId || !username) { socket.emit('error', { message: 'Room ID and username required' }); return; }
 
       console.log(`👤 ${username} joining room ${roomId}`);
-      
       socket.join(roomId);
       socket.roomId = roomId;
       socket.username = username;
@@ -368,27 +312,15 @@ io.on('connection', (socket) => {
       
       let session = activeSessions.get(roomId);
       if (!session) {
-        const defaultCode = '// Start coding here...\n\nconsole.log("Hello World!");';
-        session = new Document(defaultCode, 'javascript');
-        session.files.set('main.js', defaultCode);
+        session = new Document('// Start coding here...\n\nconsole.log("Hello World!");', 'javascript');
         activeSessions.set(roomId, session);
-        console.log(`📝 Created new session for room ${roomId}`);
       }
       
-      if (!activeRooms.has(roomId)) {
-        activeRooms.set(roomId, new Map());
-      }
-      
+      if (!activeRooms.has(roomId)) activeRooms.set(roomId, new Map());
       const roomUsers = activeRooms.get(roomId);
-      roomUsers.set(socket.id, {
-        id: socket.id,
-        username: username,
-        userId: userId,
-        joinedAt: new Date()
-      });
+      roomUsers.set(socket.id, { id: socket.id, username, userId, joinedAt: new Date() });
       
-      const state = session.getState();
-      socket.emit('document-state', state);
+      socket.emit('document-state', session.getState());
       socket.emit('files-list', session.getFiles());
       
       const users = Array.from(roomUsers.values());
@@ -396,13 +328,7 @@ io.on('connection', (socket) => {
       
       const cursors = session.updateClientCursor(socket.id, 0, username);
       io.to(roomId).emit('cursors-update', cursors);
-      
-      socket.to(roomId).emit('user-joined', {
-        id: socket.id,
-        username: username
-      });
-      
-      console.log(`✅ ${username} joined room ${roomId}. Users: ${users.length}`);
+      socket.to(roomId).emit('user-joined', { id: socket.id, username });
       
     } catch (error) {
       console.error('Join room error:', error);
@@ -410,7 +336,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // File system events
   socket.on('file-create', ({ roomId, fileName }) => {
     const session = activeSessions.get(roomId);
     if (session) {
@@ -429,7 +354,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('cursor-update', (position, roomId) => {
-    if (!roomId || position === undefined) return;
     const session = activeSessions.get(roomId);
     if (session) {
       const cursors = session.updateClientCursor(socket.id, position, socket.username);
@@ -438,27 +362,17 @@ io.on('connection', (socket) => {
   });
 
   socket.on('code-change', (operation, roomId) => {
-    if (!roomId || !operation) return;
     const session = activeSessions.get(roomId);
     if (session) {
       const result = session.applyOperation(operation, socket.id);
       if (result) {
-        // Update file content in the file system
         session.updateFileContent(session.currentFile, result.content);
-        
-        socket.to(roomId).emit('code-update', {
-          operation: result.operation,
-          content: result.content,
-          version: result.version,
-          clientId: socket.id,
-          username: socket.username
-        });
+        socket.to(roomId).emit('code-update', { operation: result.operation, content: result.content, version: result.version, clientId: socket.id, username: socket.username });
       }
     }
   });
 
   socket.on('sync-request', (version, roomId) => {
-    if (!roomId) return;
     const session = activeSessions.get(roomId);
     if (session) {
       const operations = session.getOperationsAfterVersion(version);
@@ -467,7 +381,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('language-change', (language, roomId) => {
-    if (!roomId || !language) return;
     const session = activeSessions.get(roomId);
     if (session) {
       session.changeLanguage(language);
@@ -476,7 +389,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log('🔌 User disconnected:', socket.username || socket.id);
     const roomId = socket.roomId;
     if (roomId) {
       const roomUsers = activeRooms.get(roomId);
@@ -485,18 +397,15 @@ io.on('connection', (socket) => {
         const users = Array.from(roomUsers.values());
         io.to(roomId).emit('users-update', users);
         socket.to(roomId).emit('user-left', { id: socket.id, username: socket.username });
-        
         if (users.length === 0) {
           setTimeout(() => {
             if (activeRooms.get(roomId)?.size === 0) {
               activeRooms.delete(roomId);
               activeSessions.delete(roomId);
-              console.log(`🧹 Cleaned up empty room: ${roomId}`);
             }
           }, 300000);
         }
       }
-      
       const session = activeSessions.get(roomId);
       if (session) {
         const cursors = session.removeClient(socket.id);
@@ -509,17 +418,13 @@ io.on('connection', (socket) => {
 // Start server
 const PORT = process.env.PORT || 5000;
 const HOST = '0.0.0.0';
-
 server.listen(PORT, HOST, () => {
   console.log('='.repeat(50));
   console.log('🚀 Unified IDE Backend Server');
   console.log('='.repeat(50));
   console.log(`📍 Port: ${PORT}`);
-  console.log(`🌐 Host: ${HOST}`);
-  console.log(`🗄️  MongoDB: ✅ Connected`);
-  console.log(`🔄 OT Algorithm: ✅ Enabled`);
-  console.log(`🔐 JWT Auth: ✅ Enabled`);
-  console.log(`🤖 Gemini AI: ${process.env.GEMINI_API_KEY ? '✅ Ready' : '❌ No API Key'}`);
-  console.log(`⚡ Code Execution: ${process.env.JDOODLE_CLIENT_ID ? '✅ JDoodle Ready' : '⚠️  JDoodle not configured'}`);
+  console.log(`🗄️  MongoDB: Connected`);
+  console.log(`🤖 Gemini AI: ${process.env.GEMINI_API_KEY ? '✅' : '❌'}`);
+  console.log(`⚡ JDoodle: ${process.env.JDOODLE_CLIENT_ID ? '✅' : '❌'}`);
   console.log('='.repeat(50));
 });
