@@ -4,31 +4,20 @@ const socketIo = require('socket.io');
 const cors = require('cors');
 require('dotenv').config();
 
-// Import database
 const connectDB = require('./config/database');
-
-// Import models
 const User = require('./models/User');
 const Project = require('./models/Project');
-
-// Import middleware
 const { auth } = require('./middleware/auth');
-
-// Import controllers
 const authController = require('./controllers/authController');
-
-// Import services
 const codeExecutionService = require('./services/codeExecutionService');
 const { OperationalTransform, Operation } = require('./utils/ot');
 
-// Initialize app
 const app = express();
 const server = http.createServer(app);
 
-// Connect to MongoDB
 connectDB();
 
-// ===== CORS CONFIGURATION (MUST COME BEFORE ROUTES) =====
+// CORS Configuration
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5000',
@@ -38,9 +27,7 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, curl)
     if (!origin) return callback(null, true);
-    
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
@@ -54,12 +41,10 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-
-// ===== BODY PARSER (CRITICAL FOR req.body) =====
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Debug middleware to log requests
+// Debug middleware
 app.use((req, res, next) => {
   console.log(`📨 ${req.method} ${req.path}`);
   if (req.body && Object.keys(req.body).length > 0) {
@@ -68,7 +53,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Configure Socket.IO
+// Socket.IO
 const io = socketIo(server, {
   cors: {
     origin: allowedOrigins,
@@ -80,7 +65,7 @@ const io = socketIo(server, {
   pingInterval: 25000
 });
 
-// ===== DOCUMENT CLASS FOR REAL-TIME COLLABORATION =====
+// Document Class
 class Document {
   constructor(content = '', language = 'javascript') {
     this.content = content;
@@ -114,7 +99,6 @@ class Document {
           version: this.version
         };
       }
-      
       return null;
     } catch (error) {
       console.error('Error applying operation:', error);
@@ -147,7 +131,6 @@ class Document {
         this.clientStates.delete(id);
       }
     }
-    
     return this.getActiveCursors();
   }
 
@@ -175,143 +158,137 @@ class Document {
   }
 }
 
-// ===== GLOBAL VARIABLES =====
 const activeSessions = new Map();
 const activeRooms = new Map();
 
 // Supported languages
 const SUPPORTED_LANGUAGES = {
-  'javascript': { name: 'JavaScript', extension: 'js', monaco: 'javascript' },
-  'python': { name: 'Python', extension: 'py', monaco: 'python' },
-  'java': { name: 'Java', extension: 'java', monaco: 'java' },
-  'cpp': { name: 'C++', extension: 'cpp', monaco: 'cpp' },
-  'c': { name: 'C', extension: 'c', monaco: 'c' },
-  'csharp': { name: 'C#', extension: 'cs', monaco: 'csharp' },
-  'php': { name: 'PHP', extension: 'php', monaco: 'php' },
-  'ruby': { name: 'Ruby', extension: 'rb', monaco: 'ruby' },
-  'go': { name: 'Go', extension: 'go', monaco: 'go' },
-  'rust': { name: 'Rust', extension: 'rs', monaco: 'rust' },
-  'typescript': { name: 'TypeScript', extension: 'ts', monaco: 'typescript' },
-  'html': { name: 'HTML', extension: 'html', monaco: 'html' },
-  'css': { name: 'CSS', extension: 'css', monaco: 'css' },
-  'sql': { name: 'SQL', extension: 'sql', monaco: 'sql' }
+  'javascript': { name: 'JavaScript', extension: 'js' },
+  'python': { name: 'Python', extension: 'py' },
+  'java': { name: 'Java', extension: 'java' },
+  'cpp': { name: 'C++', extension: 'cpp' },
+  'c': { name: 'C', extension: 'c' },
+  'csharp': { name: 'C#', extension: 'cs' },
+  'php': { name: 'PHP', extension: 'php' },
+  'ruby': { name: 'Ruby', extension: 'rb' },
+  'go': { name: 'Go', extension: 'go' },
+  'rust': { name: 'Rust', extension: 'rs' },
+  'typescript': { name: 'TypeScript', extension: 'ts' },
+  'html': { name: 'HTML', extension: 'html' },
+  'css': { name: 'CSS', extension: 'css' }
 };
 
 // ===== API ROUTES =====
 
-// Health check
 app.get('/api/status', (req, res) => {
   res.json({
     success: true,
     status: 'Online',
     timestamp: new Date(),
-    mongodb: 'Connected',
     activeRooms: activeSessions.size,
     activeUsers: io.engine.clientsCount,
     uptime: process.uptime()
   });
 });
 
-// Auth routes
 app.post('/api/auth/register', authController.register);
 app.post('/api/auth/login', authController.login);
 app.get('/api/auth/me', auth, authController.getMe);
 app.post('/api/auth/logout', auth, authController.logout);
 
-// Get supported languages
 app.get('/api/languages', (req, res) => {
   const languages = Object.entries(SUPPORTED_LANGUAGES).map(([key, value]) => ({
     id: key,
     name: value.name,
-    extension: value.extension,
-    monaco: value.monaco
+    extension: value.extension
   }));
   res.json({ success: true, languages });
 });
 
-// Execute code
 app.post('/api/execute', async (req, res) => {
   try {
     const { code, language, input } = req.body;
-    
     if (!code || !language) {
-      return res.status(400).json({ 
-        success: false, 
-        output: 'Code and language are required' 
-      });
+      return res.status(400).json({ success: false, output: 'Code and language required' });
     }
-    
     const result = await codeExecutionService.executeCode(code, language, input);
     res.json(result);
   } catch (error) {
-    console.error('Execution endpoint error:', error);
-    res.status(500).json({ 
-      success: false, 
-      output: `Server error: ${error.message}` 
-    });
+    console.error('Execution error:', error);
+    res.status(500).json({ success: false, output: error.message });
   }
 });
 
-// AI Analysis endpoint
-app.post('/api/analyze', async (req, res) => {
+// AI Routes
+app.post('/api/ai/generate', async (req, res) => {
+  try {
+    const { prompt, language, context } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({ success: false, error: 'Prompt required' });
+    }
+    
+    let response = '';
+    const langName = SUPPORTED_LANGUAGES[language]?.name || language;
+    
+    if (language === 'javascript') {
+      response = `// ${prompt}\n\nfunction solution() {\n  // Your code here\n  console.log("Result");\n  return "Success";\n}\n\nsolution();`;
+    } else if (language === 'python') {
+      response = `# ${prompt}\n\ndef solution():\n    # Your code here\n    print("Result")\n    return "Success"\n\nsolution()`;
+    } else if (language === 'c') {
+      response = `// ${prompt}\n\n#include <stdio.h>\n\nint main() {\n    // Your code here\n    printf("Result\\n");\n    return 0;\n}`;
+    } else if (language === 'cpp') {
+      response = `// ${prompt}\n\n#include <iostream>\nusing namespace std;\n\nint main() {\n    // Your code here\n    cout << "Result" << endl;\n    return 0;\n}`;
+    } else if (language === 'java') {
+      response = `// ${prompt}\n\npublic class Main {\n    public static void main(String[] args) {\n        // Your code here\n        System.out.println("Result");\n    }\n}`;
+    } else {
+      response = `// ${prompt}\n\n// Write your ${langName} code here\nconsole.log("Hello World");`;
+    }
+    
+    res.json({ success: true, code: response });
+    
+  } catch (error) {
+    console.error('AI error:', error);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/ai/analyze', async (req, res) => {
   try {
     const { code, language } = req.body;
     
     if (!code) {
-      return res.status(400).json({ 
-        success: false, 
-        analysis: 'Code is required' 
-      });
+      return res.status(400).json({ success: false, error: 'Code required' });
     }
     
-    const analysis = `// Code Analysis for ${language}:
-// - Lines: ${code.split('\n').length}
-// - Characters: ${code.length}
-// - Basic syntax check: ✅ Passed`;
+    const lines = code.split('\n').length;
+    const functions = (code.match(/function|def|=>/g) || []).length;
+    const loops = (code.match(/for|while/g) || []).length;
+    const conditions = (code.match(/if|else|switch/g) || []).length;
+    
+    const analysis = `📊 Code Analysis Results
 
-    res.json({ 
-      success: true, 
-      analysis 
-    });
+Language: ${SUPPORTED_LANGUAGES[language]?.name || language}
+Lines of Code: ${lines}
+Functions/Methods: ${functions}
+Loops: ${loops}
+Conditions: ${conditions}
+
+💡 Suggestions:
+1. ${lines > 100 ? 'Consider breaking into smaller files' : 'Good file size'}
+2. ${functions === 0 ? 'Add more functions for better organization' : 'Function usage looks good'}
+3. ${loops > 5 ? 'Consider optimizing loops' : 'Loop usage is reasonable'}
+4. Add comments for complex logic
+5. Use meaningful variable names
+6. Consider error handling for edge cases
+
+✅ Overall: ${lines < 200 ? 'Good' : 'Consider refactoring'} code structure`;
+    
+    res.json({ success: true, analysis });
+    
   } catch (error) {
     console.error('Analysis error:', error);
-    res.status(500).json({ 
-      success: false, 
-      analysis: `Analysis error: ${error.message}` 
-    });
-  }
-});
-
-// Test AI endpoint
-app.post('/api/test-ai', async (req, res) => {
-  try {
-    const { prompt, context, language } = req.body;
-    
-    if (!prompt) {
-      return res.status(400).json({ 
-        success: false, 
-        completion: 'Prompt is required' 
-      });
-    }
-    
-    const mockCompletion = `// AI Code Suggestion for ${language}:
-// Based on your request: "${prompt}"
-
-function example() {
-  console.log("AI-generated code");
-  return "Success";
-}`;
-
-    res.json({ 
-      success: true, 
-      completion: mockCompletion 
-    });
-  } catch (error) {
-    console.error('AI error:', error);
-    res.status(500).json({ 
-      success: false, 
-      completion: `AI service error: ${error.message}` 
-    });
+    res.json({ success: false, error: error.message });
   }
 });
 
@@ -319,7 +296,6 @@ function example() {
 app.post('/api/projects', auth, async (req, res) => {
   try {
     const { name, description, language, code, isPublic } = req.body;
-    
     const projectId = Math.random().toString(36).substring(2, 10).toUpperCase();
     
     const project = new Project({
@@ -341,45 +317,25 @@ app.post('/api/projects', auth, async (req, res) => {
     
     res.status(201).json({
       success: true,
-      message: 'Project saved successfully',
-      project: {
-        id: project._id,
-        projectId: project.projectId,
-        name: project.name,
-        language: project.language,
-        createdAt: project.createdAt
-      }
+      message: 'Project saved',
+      project: { id: project._id, projectId: project.projectId, name: project.name }
     });
   } catch (error) {
-    console.error('Save project error:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to save project' 
-    });
+    console.error('Save error:', error);
+    res.status(500).json({ success: false, error: 'Failed to save project' });
   }
 });
 
 app.get('/api/projects', auth, async (req, res) => {
   try {
     const projects = await Project.find({
-      $or: [
-        { owner: req.user._id },
-        { 'collaborators.user': req.user._id }
-      ]
-    })
-    .populate('owner', 'username email')
-    .sort({ updatedAt: -1 });
+      $or: [{ owner: req.user._id }, { 'collaborators.user': req.user._id }]
+    }).populate('owner', 'username email').sort({ updatedAt: -1 });
     
-    res.json({ 
-      success: true,
-      projects 
-    });
+    res.json({ success: true, projects });
   } catch (error) {
     console.error('Get projects error:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to fetch projects' 
-    });
+    res.status(500).json({ success: false, error: 'Failed to fetch projects' });
   }
 });
 
@@ -393,11 +349,11 @@ io.on('connection', (socket) => {
       const { roomId, username, userId } = roomData;
       
       if (!roomId || !username) {
-        socket.emit('error', { message: 'Room ID and username are required' });
+        socket.emit('error', { message: 'Room ID and username required' });
         return;
       }
 
-      console.log(`👤 ${username} (${socket.id}) joining room ${roomId}`);
+      console.log(`👤 ${username} joining room ${roomId}`);
       
       socket.join(roomId);
       socket.roomId = roomId;
@@ -406,13 +362,7 @@ io.on('connection', (socket) => {
       
       let session = activeSessions.get(roomId);
       if (!session) {
-        const welcomeMessage = `// Welcome to Unified IDE - Collaborative Coding Environment
-// Room: ${roomId}
-// User: ${username}
-
-console.log("Hello from ${username}!");`;
-        
-        session = new Document(welcomeMessage, 'javascript');
+        session = new Document('// Start coding here...\n\nconsole.log("Hello World!");', 'javascript');
         activeSessions.set(roomId, session);
         console.log(`📝 Created new session for room ${roomId}`);
       }
@@ -443,17 +393,16 @@ console.log("Hello from ${username}!");`;
         username: username
       });
       
-      console.log(`✅ ${username} joined room ${roomId}. Total users: ${users.length}`);
+      console.log(`✅ ${username} joined room ${roomId}. Users: ${users.length}`);
       
     } catch (error) {
       console.error('Join room error:', error);
-      socket.emit('error', { message: 'Failed to join room: ' + error.message });
+      socket.emit('error', { message: 'Failed to join room' });
     }
   });
 
   socket.on('cursor-update', (position, roomId) => {
     if (!roomId || position === undefined) return;
-    
     const session = activeSessions.get(roomId);
     if (session) {
       const cursors = session.updateClientCursor(socket.id, position, socket.username);
@@ -463,11 +412,9 @@ console.log("Hello from ${username}!");`;
 
   socket.on('code-change', (operation, roomId) => {
     if (!roomId || !operation) return;
-    
     const session = activeSessions.get(roomId);
     if (session) {
       const result = session.applyOperation(operation, socket.id);
-      
       if (result) {
         socket.to(roomId).emit('code-update', {
           operation: result.operation,
@@ -476,15 +423,12 @@ console.log("Hello from ${username}!");`;
           clientId: socket.id,
           username: socket.username
         });
-        
-        console.log(`📝 ${socket.username} updated room ${roomId} (v${result.version})`);
       }
     }
   });
 
   socket.on('sync-request', (version, roomId) => {
     if (!roomId) return;
-    
     const session = activeSessions.get(roomId);
     if (session) {
       const operations = session.getOperationsAfterVersion(version);
@@ -494,35 +438,23 @@ console.log("Hello from ${username}!");`;
 
   socket.on('language-change', (language, roomId) => {
     if (!roomId || !language) return;
-    
     const session = activeSessions.get(roomId);
     if (session) {
-      const oldLang = session.language;
       session.changeLanguage(language);
-      
       socket.to(roomId).emit('language-update', language);
-      console.log(`🌐 ${socket.username} changed language from ${oldLang} to ${language} in room ${roomId}`);
     }
   });
 
   socket.on('disconnect', () => {
     console.log('🔌 User disconnected:', socket.username || socket.id);
-    
     const roomId = socket.roomId;
     if (roomId) {
       const roomUsers = activeRooms.get(roomId);
       if (roomUsers) {
         roomUsers.delete(socket.id);
-        
         const users = Array.from(roomUsers.values());
         io.to(roomId).emit('users-update', users);
-        
-        socket.to(roomId).emit('user-left', {
-          id: socket.id,
-          username: socket.username
-        });
-        
-        console.log(`👋 ${socket.username} left room ${roomId}. Remaining: ${users.length}`);
+        socket.to(roomId).emit('user-left', { id: socket.id, username: socket.username });
         
         if (users.length === 0) {
           setTimeout(() => {
@@ -554,12 +486,9 @@ server.listen(PORT, HOST, () => {
   console.log('='.repeat(50));
   console.log(`📍 Port: ${PORT}`);
   console.log(`🌐 Host: ${HOST}`);
-  console.log(`🌐 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
   console.log(`🗄️  MongoDB: ✅ Connected`);
   console.log(`🔄 OT Algorithm: ✅ Enabled`);
   console.log(`🔐 JWT Auth: ✅ Enabled`);
-  console.log(`🤖 Code Execution: ✅ Multi-language Support`);
-  console.log(`🤖 AI Integration: ✅ Gemini API Ready`);
+  console.log(`🤖 AI Routes: ✅ Ready`);
   console.log('='.repeat(50));
-  console.log('📡 Waiting for connections...');
 });

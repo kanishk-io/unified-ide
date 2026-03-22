@@ -28,24 +28,26 @@ import {
   Save,
   FolderPlus,
   User,
+  Mail,
+  Lock,
   Eye,
   EyeOff,
-  Home
+  Plus,
+  FileCode
 } from 'lucide-react';
 import './App.css';
 import { useAuth } from './AuthContext';
 
-// Initialize socket with reconnection settings
+// Initialize socket
 const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000', {
   transports: ['websocket', 'polling'],
   reconnection: true,
   reconnectionAttempts: 10,
   reconnectionDelay: 1000,
-  timeout: 20000,
-  autoConnect: false
+  timeout: 20000
 });
 
-// Supported languages - REMOVED from create room page, only in editor
+// Supported languages
 const LANGUAGE_OPTIONS = [
   { id: 'javascript', name: 'JavaScript', extension: 'js' },
   { id: 'python', name: 'Python', extension: 'py' },
@@ -59,11 +61,10 @@ const LANGUAGE_OPTIONS = [
   { id: 'rust', name: 'Rust', extension: 'rs' },
   { id: 'typescript', name: 'TypeScript', extension: 'ts' },
   { id: 'html', name: 'HTML', extension: 'html' },
-  { id: 'css', name: 'CSS', extension: 'css' },
-  { id: 'sql', name: 'SQL', extension: 'sql' }
+  { id: 'css', name: 'CSS', extension: 'css' }
 ];
 
-// OT Utilities - FIXED to prevent infinite loops
+// OT Utilities
 const OTUtils = {
   createOperationFromChange: (change) => {
     if (!change || !change.changes || change.changes.length === 0) return null;
@@ -121,15 +122,6 @@ const OTUtils = {
     } catch (error) {
       console.error('Error applying operation:', error);
     }
-  },
-
-  // Prevent duplicate operations
-  lastOperation: null,
-  isDuplicateOperation(operation) {
-    const opString = JSON.stringify(operation);
-    const lastOp = this.lastOperation;
-    this.lastOperation = opString;
-    return lastOp === opString;
   }
 };
 
@@ -189,14 +181,6 @@ function RegisterPage({ onBack, onLoginSuccess }) {
     setLoading(false);
   };
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-    if (errors[name]) {
-      setErrors(prev => ({ ...prev, [name]: '' }));
-    }
-  };
-
   return (
     <div className="auth-container">
       <div className="auth-card">
@@ -206,7 +190,7 @@ function RegisterPage({ onBack, onLoginSuccess }) {
             Back
           </button>
           <div className="logo-container">
-            <Code2 className="logo-icon" style={{ padding: '12px' }} />
+            <UserPlus className="logo-icon" />
             <h1>Create Account</h1>
             <p>Join Unified IDE for collaborative coding</p>
           </div>
@@ -220,7 +204,7 @@ function RegisterPage({ onBack, onLoginSuccess }) {
               name="username"
               placeholder="Enter your username"
               value={formData.username}
-              onChange={handleChange}
+              onChange={(e) => setFormData({...formData, username: e.target.value})}
               className="auth-input"
               disabled={loading}
             />
@@ -234,7 +218,7 @@ function RegisterPage({ onBack, onLoginSuccess }) {
               name="email"
               placeholder="Enter your email"
               value={formData.email}
-              onChange={handleChange}
+              onChange={(e) => setFormData({...formData, email: e.target.value})}
               className="auth-input"
               disabled={loading}
             />
@@ -249,15 +233,11 @@ function RegisterPage({ onBack, onLoginSuccess }) {
                 name="password"
                 placeholder="Create a password (min. 6 characters)"
                 value={formData.password}
-                onChange={handleChange}
+                onChange={(e) => setFormData({...formData, password: e.target.value})}
                 className="auth-input"
                 disabled={loading}
               />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="password-toggle"
-              >
+              <button type="button" onClick={() => setShowPassword(!showPassword)} className="password-toggle">
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
@@ -272,53 +252,26 @@ function RegisterPage({ onBack, onLoginSuccess }) {
                 name="confirmPassword"
                 placeholder="Confirm your password"
                 value={formData.confirmPassword}
-                onChange={handleChange}
+                onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
                 className="auth-input"
                 disabled={loading}
               />
-              <button
-                type="button"
-                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                className="password-toggle"
-              >
+              <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} className="password-toggle">
                 {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
             {errors.confirmPassword && <div className="auth-error">{errors.confirmPassword}</div>}
           </div>
 
-          {errors.submit && (
-            <div className="auth-error" style={{ textAlign: 'center' }}>
-              {errors.submit}
-            </div>
-          )}
-
           <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
-            {loading ? (
-              <>
-                <div className="loading-spinner"></div>
-                Creating Account...
-              </>
-            ) : (
-              <>
-                <UserPlus size={18} />
-                Create Account
-              </>
-            )}
+            {loading ? 'Creating Account...' : 'Create Account'}
           </button>
 
           <div className="divider">or</div>
 
-          <div style={{ textAlign: 'center' }}>
-            <button
-              type="button"
-              onClick={() => onLoginSuccess(null, 'login')}
-              className="btn btn-outline btn-full"
-              disabled={loading}
-            >
-              Already have an account? Sign In
-            </button>
-          </div>
+          <button type="button" onClick={() => onLoginSuccess(null, 'login')} className="btn btn-outline btn-full">
+            Already have an account? Sign In
+          </button>
         </form>
       </div>
     </div>
@@ -327,17 +280,13 @@ function RegisterPage({ onBack, onLoginSuccess }) {
 
 function LoginPage({ onBack, onRegister, onLoginSuccess }) {
   const { login } = useAuth();
-  const [formData, setFormData] = useState({
-    email: '',
-    password: ''
-  });
+  const [formData, setFormData] = useState({ email: '', password: '' });
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
     if (!formData.email.trim() || !formData.password) {
       setErrors({ submit: 'Please fill in all fields' });
       return;
@@ -356,12 +305,6 @@ function LoginPage({ onBack, onRegister, onLoginSuccess }) {
     setLoading(false);
   };
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-    if (errors.submit) setErrors({});
-  };
-
   return (
     <div className="auth-container">
       <div className="auth-card">
@@ -371,7 +314,7 @@ function LoginPage({ onBack, onRegister, onLoginSuccess }) {
             Back
           </button>
           <div className="logo-container">
-            <Code2 className="logo-icon" style={{ padding: '12px' }} />
+            <LogIn className="logo-icon" />
             <h1>Sign In</h1>
             <p>Welcome back to Unified IDE</p>
           </div>
@@ -385,7 +328,7 @@ function LoginPage({ onBack, onRegister, onLoginSuccess }) {
               name="email"
               placeholder="Enter your email"
               value={formData.email}
-              onChange={handleChange}
+              onChange={(e) => setFormData({...formData, email: e.target.value})}
               className="auth-input"
               disabled={loading}
             />
@@ -399,52 +342,27 @@ function LoginPage({ onBack, onRegister, onLoginSuccess }) {
                 name="password"
                 placeholder="Enter your password"
                 value={formData.password}
-                onChange={handleChange}
+                onChange={(e) => setFormData({...formData, password: e.target.value})}
                 className="auth-input"
                 disabled={loading}
               />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="password-toggle"
-              >
+              <button type="button" onClick={() => setShowPassword(!showPassword)} className="password-toggle">
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
           </div>
 
-          {errors.submit && (
-            <div className="auth-error" style={{ textAlign: 'center' }}>
-              {errors.submit}
-            </div>
-          )}
+          {errors.submit && <div className="auth-error">{errors.submit}</div>}
 
           <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
-            {loading ? (
-              <>
-                <div className="loading-spinner"></div>
-                Signing In...
-              </>
-            ) : (
-              <>
-                <LogIn size={18} />
-                Sign In
-              </>
-            )}
+            {loading ? 'Signing In...' : 'Sign In'}
           </button>
 
           <div className="divider">or</div>
 
-          <div style={{ textAlign: 'center' }}>
-            <button
-              type="button"
-              onClick={onRegister}
-              className="btn btn-outline btn-full"
-              disabled={loading}
-            >
-              Don't have an account? Register
-            </button>
-          </div>
+          <button type="button" onClick={onRegister} className="btn btn-outline btn-full">
+            Don't have an account? Register
+          </button>
         </form>
       </div>
     </div>
@@ -457,29 +375,20 @@ function LandingPage({ onNavigate, user, onLogout }) {
       <div className="auth-card">
         <div className="auth-header">
           <div className="logo-container">
-            <Code2 className="logo-icon" style={{ padding: '12px' }} />
+            <Code2 className="logo-icon" />
             <h1>Unified IDE</h1>
             <p>AI-Assisted Real-time Collaborative Code Editor</p>
           </div>
           
           {user && (
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '12px', 
-              marginTop: '16px',
-              background: 'rgba(255, 255, 255, 0.05)',
-              padding: '12px 20px',
-              borderRadius: '12px'
-            }}>
+            <div className="user-info-bar">
               <User size={18} />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: '600', color: '#00d4aa' }}>{user.username}</div>
-                <div style={{ fontSize: '12px', color: '#888' }}>{user.email}</div>
+              <div className="user-details">
+                <div className="user-name">{user.username}</div>
+                <div className="user-email">{user.email}</div>
               </div>
               <button onClick={onLogout} className="btn btn-sm btn-outline">
-                <LogOut size={14} />
-                Logout
+                <LogOut size={14} /> Logout
               </button>
             </div>
           )}
@@ -494,7 +403,6 @@ function LandingPage({ onNavigate, user, onLogout }) {
               <span>Generate unique room code</span>
               <span>Invite team members</span>
               <span>Real-time collaboration</span>
-              <span>AI-powered assistance</span>
             </div>
           </div>
 
@@ -506,7 +414,6 @@ function LandingPage({ onNavigate, user, onLogout }) {
               <span>Join with room code</span>
               <span>See online users</span>
               <span>Professional code editor</span>
-              <span>Integrated terminal</span>
             </div>
           </div>
         </div>
@@ -514,43 +421,30 @@ function LandingPage({ onNavigate, user, onLogout }) {
         <div className="features-list">
           <div className="feature-item">
             <Users className="feature-icon" />
-            <span>Real-time Collaboration with Operational Transform Algorithm</span>
+            <span>Real-time Collaboration with Operational Transform</span>
           </div>
           <div className="feature-item">
             <Bot className="feature-icon" />
-            <span>AI-Powered Code Completion & Analysis (15+ Languages)</span>
+            <span>AI-Powered Code Generation & Analysis</span>
           </div>
           <div className="feature-item">
             <Terminal className="feature-icon" />
-            <span>Multi-language Code Execution with Free APIs</span>
+            <span>Multi-language Code Execution</span>
           </div>
           <div className="feature-item">
             <Sparkles className="feature-icon" />
-            <span>Smart Error Detection & Debugging Suggestions</span>
+            <span>Smart Code Analysis & Suggestions</span>
           </div>
         </div>
 
         {!user && (
-          <div style={{ marginTop: '32px', textAlign: 'center' }}>
-            <p style={{ color: '#888', marginBottom: '16px' }}>
-              Get the full experience by creating an account
-            </p>
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-              <button 
-                onClick={() => onNavigate('register')}
-                className="btn btn-primary"
-              >
-                <UserPlus size={16} />
-                Register
-              </button>
-              <button 
-                onClick={() => onNavigate('login')}
-                className="btn btn-outline"
-              >
-                <LogIn size={16} />
-                Login
-              </button>
-            </div>
+          <div className="auth-buttons">
+            <button onClick={() => onNavigate('register')} className="btn btn-primary">
+              <UserPlus size={16} /> Register
+            </button>
+            <button onClick={() => onNavigate('login')} className="btn btn-outline">
+              <LogIn size={16} /> Login
+            </button>
           </div>
         )}
       </div>
@@ -558,14 +452,9 @@ function LandingPage({ onNavigate, user, onLogout }) {
   );
 }
 
-// FIXED: Removed language selection from create room page
 function CreateRoomPage({ onBack, onJoinRoom, user }) {
-  const [formData, setFormData] = useState({
-    roomName: 'My Project',
-    description: ''
-  });
+  const [roomName, setRoomName] = useState('My Project');
   const [loading, setLoading] = useState(false);
-  const [createdRoom, setCreatedRoom] = useState(null);
 
   const handleCreateRoom = async () => {
     if (!user) {
@@ -576,19 +465,10 @@ function CreateRoomPage({ onBack, onJoinRoom, user }) {
     setLoading(true);
     try {
       const roomId = Math.random().toString(36).substring(2, 10).toUpperCase();
-      const roomData = {
-        roomId,
-        name: formData.roomName,
-        username: user.username,
-        userId: user.id
-      };
-      
-      setCreatedRoom(roomData);
       toast.success(`Room ${roomId} created!`);
-      
       setTimeout(() => {
         onJoinRoom(roomId, user.username, user.id);
-      }, 2000);
+      }, 1500);
     } catch (error) {
       toast.error('Failed to create room');
     } finally {
@@ -601,11 +481,10 @@ function CreateRoomPage({ onBack, onJoinRoom, user }) {
       <div className="auth-card">
         <div className="auth-header">
           <button onClick={onBack} className="back-btn">
-            <ArrowLeft size={18} />
-            Back
+            <ArrowLeft size={18} /> Back
           </button>
           <div className="logo-container">
-            <Code2 className="logo-icon" style={{ padding: '12px' }} />
+            <FolderPlus className="logo-icon" />
             <h1>Create Room</h1>
             <p>Start a new collaborative session</p>
           </div>
@@ -614,12 +493,7 @@ function CreateRoomPage({ onBack, onJoinRoom, user }) {
         <div className="auth-form">
           <div className="input-group">
             <label>Your Username</label>
-            <input
-              type="text"
-              value={user?.username || 'Guest'}
-              className="auth-input"
-              disabled
-            />
+            <input type="text" value={user?.username || 'Guest'} className="auth-input" disabled />
           </div>
 
           <div className="input-group">
@@ -627,48 +501,16 @@ function CreateRoomPage({ onBack, onJoinRoom, user }) {
             <input
               type="text"
               placeholder="Enter room name"
-              value={formData.roomName}
-              onChange={(e) => setFormData(prev => ({ ...prev, roomName: e.target.value }))}
+              value={roomName}
+              onChange={(e) => setRoomName(e.target.value)}
               className="auth-input"
               disabled={loading}
-            />
-          </div>
-
-          <div className="input-group">
-            <label>Description (Optional)</label>
-            <textarea
-              placeholder="Describe what you'll be working on..."
-              value={formData.description}
-              onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-              className="auth-input"
-              disabled={loading}
-              rows="3"
             />
           </div>
 
           <button onClick={handleCreateRoom} className="btn btn-primary btn-full" disabled={loading}>
-            {loading ? (
-              <>
-                <div className="loading-spinner"></div>
-                Creating Room...
-              </>
-            ) : (
-              <>
-                <FolderPlus size={18} />
-                Create Room
-              </>
-            )}
+            {loading ? 'Creating Room...' : 'Create Room'}
           </button>
-
-          {createdRoom && (
-            <div className="room-created">
-              <p style={{ color: '#00d4aa', fontWeight: '600' }}>✓ Room Created Successfully!</p>
-              <p style={{ margin: '8px 0' }}>Room Code: <strong>{createdRoom.roomId}</strong></p>
-              <p className="share-hint">
-                Share this code with your team members to invite them
-              </p>
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -684,11 +526,7 @@ function JoinRoomPage({ onBack, onJoinRoom, user }) {
       toast.error('Please enter a room code');
       return;
     }
-
-    const username = user?.username || 'Guest';
-    const userId = user?.id || null;
-    
-    onJoinRoom(roomCode.toUpperCase(), username, userId);
+    onJoinRoom(roomCode.toUpperCase(), user?.username || 'Guest', user?.id || null);
   };
 
   return (
@@ -696,11 +534,10 @@ function JoinRoomPage({ onBack, onJoinRoom, user }) {
       <div className="auth-card">
         <div className="auth-header">
           <button onClick={onBack} className="back-btn">
-            <ArrowLeft size={18} />
-            Back
+            <ArrowLeft size={18} /> Back
           </button>
           <div className="logo-container">
-            <Code2 className="logo-icon" style={{ padding: '12px' }} />
+            <LogIn className="logo-icon" />
             <h1>Join Room</h1>
             <p>Enter a room code to collaborate</p>
           </div>
@@ -709,12 +546,7 @@ function JoinRoomPage({ onBack, onJoinRoom, user }) {
         <div className="auth-form">
           <div className="input-group">
             <label>Your Username</label>
-            <input
-              type="text"
-              value={user?.username || 'Guest'}
-              className="auth-input"
-              disabled
-            />
+            <input type="text" value={user?.username || 'Guest'} className="auth-input" disabled />
           </div>
 
           <div className="input-group">
@@ -730,24 +562,8 @@ function JoinRoomPage({ onBack, onJoinRoom, user }) {
           </div>
 
           <button onClick={handleJoinRoom} className="btn btn-primary btn-full" disabled={loading}>
-            {loading ? (
-              <>
-                <div className="loading-spinner"></div>
-                Joining Room...
-              </>
-            ) : (
-              <>
-                <LogIn size={18} />
-                Join Room
-              </>
-            )}
+            {loading ? 'Joining...' : 'Join Room'}
           </button>
-
-          <div style={{ textAlign: 'center', marginTop: '16px' }}>
-            <p style={{ color: '#888', fontSize: '14px' }}>
-              Ask the room creator for the room code
-            </p>
-          </div>
         </div>
       </div>
     </div>
@@ -758,16 +574,11 @@ function JoinRoomPage({ onBack, onJoinRoom, user }) {
 
 function LanguageSelector({ currentLanguage, onLanguageChange }) {
   const [isOpen, setIsOpen] = useState(false);
-
   const currentLang = LANGUAGE_OPTIONS.find(lang => lang.id === currentLanguage) || LANGUAGE_OPTIONS[0];
 
   return (
     <div className="language-selector">
-      <button 
-        className="language-dropdown-btn"
-        onClick={() => setIsOpen(!isOpen)}
-        onBlur={() => setTimeout(() => setIsOpen(false), 200)}
-      >
+      <button className="language-dropdown-btn" onClick={() => setIsOpen(!isOpen)}>
         <Code2 size={16} />
         <span>{currentLang.name}</span>
         <ChevronDown size={16} />
@@ -779,10 +590,7 @@ function LanguageSelector({ currentLanguage, onLanguageChange }) {
             <button
               key={language.id}
               className={`language-option ${currentLanguage === language.id ? 'active' : ''}`}
-              onClick={() => {
-                onLanguageChange(language.id);
-                setIsOpen(false);
-              }}
+              onClick={() => { onLanguageChange(language.id); setIsOpen(false); }}
             >
               {language.name}
             </button>
@@ -793,71 +601,8 @@ function LanguageSelector({ currentLanguage, onLanguageChange }) {
   );
 }
 
-function TerminalSection({ output, onClear, isExpanded, onToggle, isRunning }) {
-  const terminalRef = useRef(null);
-
-  // Auto-scroll to bottom
-  useEffect(() => {
-    if (terminalRef.current) {
-      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
-    }
-  }, [output]);
-
-  return (
-    <div className="sidebar-section">
-      <div className="section-header" onClick={onToggle}>
-        <Terminal className="section-icon" />
-        <h3>Terminal Output</h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <button 
-            onClick={(e) => {
-              e.stopPropagation();
-              onClear();
-            }} 
-            className="btn btn-sm btn-secondary"
-            title="Clear terminal"
-            disabled={isRunning}
-          >
-            Clear
-          </button>
-          <ChevronRight className={`section-toggle ${isExpanded ? 'rotated' : ''}`} size={18} />
-        </div>
-      </div>
-      
-      {isExpanded && (
-        <div className="section-content">
-          <div className="terminal-output" ref={terminalRef}>
-            <pre>{output || '$ Terminal ready. Run your code to see output here...'}</pre>
-          </div>
-          {isRunning && (
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '8px', 
-              marginTop: '12px',
-              color: '#ffc107',
-              fontSize: '12px'
-            }}>
-              <div className="loading-spinner" style={{ width: '16px', height: '16px' }}></div>
-              Executing code...
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// FIXED: Removed Apply button, only Copy button remains
 function AISection({ aiPrompt, setAiPrompt, aiResponse, onRequestAI, language, isAnalyzing }) {
   const [isExpanded, setIsExpanded] = useState(true);
-
-  const currentLang = LANGUAGE_OPTIONS.find(l => l.id === language)?.name || language;
-
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(aiResponse);
-    toast.success('Code copied to clipboard!');
-  };
 
   return (
     <div className="sidebar-section">
@@ -869,54 +614,28 @@ function AISection({ aiPrompt, setAiPrompt, aiResponse, onRequestAI, language, i
       
       {isExpanded && (
         <div className="section-content">
-          <div className="input-group mb-4">
-            <label>Ask AI for {currentLang} code</label>
-            <textarea
-              placeholder={`Describe what you want to code in ${currentLang}...\nExample: "Write a function to calculate factorial"`}
-              value={aiPrompt}
-              onChange={(e) => setAiPrompt(e.target.value)}
-              className="ai-textarea"
-              rows="4"
-              disabled={isAnalyzing}
-            />
-          </div>
+          <textarea
+            placeholder="Describe what code you want to generate..."
+            value={aiPrompt}
+            onChange={(e) => setAiPrompt(e.target.value)}
+            className="ai-textarea"
+            rows="4"
+            disabled={isAnalyzing}
+          />
           
-          <button 
-            onClick={() => onRequestAI(aiPrompt)}
-            className="btn btn-primary btn-full mb-4"
-            disabled={!aiPrompt.trim() || isAnalyzing}
-          >
-            {isAnalyzing ? (
-              <>
-                <div className="loading-spinner"></div>
-                Generating...
-              </>
-            ) : (
-              <>
-                <Bot size={16} />
-                Generate Code
-              </>
-            )}
+          <button onClick={() => onRequestAI(aiPrompt)} className="btn btn-primary btn-full mb-4" disabled={!aiPrompt.trim() || isAnalyzing}>
+            {isAnalyzing ? 'Generating...' : 'Generate Code'}
           </button>
           
           {aiResponse && (
             <div className="ai-response">
               <div className="response-header">
                 <h4>Generated Code</h4>
-                <button 
-                  onClick={copyToClipboard}
-                  className="btn btn-sm btn-secondary"
-                  title="Copy to clipboard"
-                >
-                  <Copy size={14} />
-                  Copy
+                <button onClick={() => navigator.clipboard.writeText(aiResponse)} className="btn btn-sm btn-secondary">
+                  <Copy size={14} /> Copy
                 </button>
               </div>
-              <div className="response-content">
-                <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {aiResponse}
-                </pre>
-              </div>
+              <pre className="response-content">{aiResponse}</pre>
             </div>
           )}
         </div>
@@ -925,73 +644,63 @@ function AISection({ aiPrompt, setAiPrompt, aiResponse, onRequestAI, language, i
   );
 }
 
-// FIXED: Removed Input Data section, added stdin prompt modal
-function InputPrompt({ isOpen, onClose, onSubmit }) {
-  const [input, setInput] = useState('');
+function TerminalSection({ output, onClear, isExpanded, onToggle, isRunning }) {
+  return (
+    <div className="sidebar-section">
+      <div className="section-header" onClick={onToggle}>
+        <Terminal className="section-icon" />
+        <h3>Terminal Output</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button onClick={(e) => { e.stopPropagation(); onClear(); }} className="btn btn-sm btn-secondary">Clear</button>
+          <ChevronRight className={`section-toggle ${isExpanded ? 'rotated' : ''}`} size={18} />
+        </div>
+      </div>
+      
+      {isExpanded && (
+        <div className="section-content">
+          <div className="terminal-output">
+            <pre>{output || '$ Terminal ready. Run your code to see output here...'}</pre>
+          </div>
+          {isRunning && <div className="running-indicator"><div className="loading-spinner"></div> Executing...</div>}
+        </div>
+      )}
+    </div>
+  );
+}
 
-  const handleSubmit = () => {
-    onSubmit(input);
-    setInput('');
-    onClose();
+function TerminalInput({ onSendInput, isRunning }) {
+  const [input, setInput] = useState('');
+  const [history, setHistory] = useState([]);
+
+  const handleSendInput = () => {
+    if (input.trim()) {
+      onSendInput(input);
+      setHistory([...history, `> ${input}`]);
+      setInput('');
+    }
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.7)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 9999
-    }}>
-      <div style={{
-        background: 'rgba(30, 30, 30, 0.95)',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-        borderRadius: '16px',
-        padding: '24px',
-        width: '400px',
-        maxWidth: '90%'
-      }}>
-        <h3 style={{ color: '#00d4aa', marginBottom: '16px' }}>Program Input Required</h3>
-        <p style={{ color: '#ccc', marginBottom: '16px', fontSize: '14px' }}>
-          Your program is waiting for input:
-        </p>
-        <textarea
-          autoFocus
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Enter input data here..."
-          style={{
-            width: '100%',
-            background: 'rgba(255, 255, 255, 0.05)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            borderRadius: '8px',
-            padding: '12px',
-            color: 'white',
-            fontSize: '14px',
-            marginBottom: '16px',
-            minHeight: '100px'
-          }}
-        />
-        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-          <button
-            onClick={onClose}
-            className="btn btn-secondary"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            className="btn btn-primary"
-          >
-            Submit Input
-          </button>
+    <div className="sidebar-section">
+      <div className="section-header">
+        <Terminal className="section-icon" />
+        <h3>Program Input</h3>
+      </div>
+      <div className="section-content">
+        <div className="terminal-output" style={{ maxHeight: '150px', fontSize: '12px' }}>
+          <pre>{history.join('\n') || 'Enter input for your program...'}</pre>
+        </div>
+        <div className="input-group mt-3">
+          <input
+            type="text"
+            placeholder="Enter input..."
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            className="auth-input"
+            disabled={isRunning}
+            onKeyPress={(e) => e.key === 'Enter' && handleSendInput()}
+          />
+          <button onClick={handleSendInput} className="btn btn-sm btn-primary mt-2">Send</button>
         </div>
       </div>
     </div>
@@ -999,177 +708,95 @@ function InputPrompt({ isOpen, onClose, onSubmit }) {
 }
 
 function EditorPage({ roomId, username, userId, onLeaveRoom }) {
-  const [code, setCode] = useState('');
-  const [language, setLanguage] = useState('javascript'); // Default language
+  const [code, setCode] = useState('// Start coding here...');
+  const [language, setLanguage] = useState('javascript');
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiResponse, setAiResponse] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showUsersPopup, setShowUsersPopup] = useState(false);
-  const [documentVersion, setDocumentVersion] = useState(0);
   const [terminalOutput, setTerminalOutput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
   const [terminalExpanded, setTerminalExpanded] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [showWelcomeToast, setShowWelcomeToast] = useState(true);
-  const [showInputPrompt, setShowInputPrompt] = useState(false);
-  const [pendingExecution, setPendingExecution] = useState(null);
+  const [programInput, setProgramInput] = useState('');
+  
   const editorRef = useRef(null);
   const socketRef = useRef(null);
-  const processingRef = useRef(false); // Prevent infinite loops
+  const editorTimeoutRef = useRef(null);
 
   // Initialize socket connection
   useEffect(() => {
     socketRef.current = socket;
-    socket.connect();
-
-    // Show welcome toast notification instead of putting text in editor
-    if (showWelcomeToast) {
-      toast.info(`👋 Welcome to room: ${roomId}`, {
-        position: "top-right",
-        autoClose: 4000
-      });
-      setShowWelcomeToast(false);
-    }
     
-    // Join room
     socket.emit('join-room', { roomId, username, userId });
-    console.log('Joining room:', roomId, 'as', username);
-
-    // Socket event listeners
-    const handleConnect = () => {
-      console.log('Connected to server');
-      setIsSyncing(true);
-    };
+    toast.info(`Welcome to room ${roomId}!`, { autoClose: 3000 });
 
     const handleDocumentState = (state) => {
-      console.log('Received document state:', state);
-      if (state.content !== undefined) {
+      if (state.content && state.content !== code) {
         setCode(state.content);
       }
-      if (state.language) {
-        setLanguage(state.language);
-      }
-      if (state.version !== undefined) {
-        setDocumentVersion(state.version);
-      }
+      if (state.language) setLanguage(state.language);
       setIsSyncing(false);
     };
 
-    // FIXED: Prevent infinite loops
     const handleCodeUpdate = (update) => {
       const { operation, content, version, username: updateUser } = update;
-      
-      // Don't process our own updates
-      if (updateUser === username) return;
-      
-      if (editorRef.current) {
+      if (updateUser !== username && editorRef.current) {
         OTUtils.applyOperationToEditor(editorRef.current, operation);
       }
-      
       setCode(content);
-      setDocumentVersion(version);
-      
-      // Show subtle toast for large changes only
-      if (operation.type === 'insert' && operation.text?.length > 10) {
+      if (updateUser !== username) {
         toast.info(`${updateUser} made changes`, { autoClose: 1000 });
       }
     };
 
-    const handleUsersUpdate = (users) => {
-      console.log('Users updated:', users);
-      setOnlineUsers(users);
-    };
+    const handleUsersUpdate = (users) => setOnlineUsers(users);
+    const handleUserJoined = (userData) => toast.info(`${userData.username} joined the room`);
+    const handleUserLeft = (userData) => toast.warning(`${userData.username} left the room`);
+    const handleLanguageUpdate = (newLanguage) => setLanguage(newLanguage);
 
-    const handleUserJoined = (userData) => {
-      toast.info(`${userData.username} joined the room`);
-    };
-
-    const handleUserLeft = (userData) => {
-      toast.warning(`${userData.username} left the room`);
-    };
-
-    const handleLanguageUpdate = (newLanguage) => {
-      setLanguage(newLanguage);
-      toast.info(`Language changed to ${newLanguage}`);
-    };
-
-    const handleSyncResponse = (operations, state) => {
-      if (editorRef.current) {
-        operations.forEach(op => {
-          OTUtils.applyOperationToEditor(editorRef.current, op);
-        });
-      }
-      if (state) {
-        setCode(state.content);
-        setDocumentVersion(state.version);
-      }
-      setIsSyncing(false);
-      toast.info('Synced with latest version');
-    };
-
-    const handleError = (error) => {
-      console.error('Socket error:', error);
-      toast.error(error.message || 'Connection error');
-      setIsSyncing(false);
-    };
-
-    // Attach listeners
-    socket.on('connect', handleConnect);
     socket.on('document-state', handleDocumentState);
     socket.on('code-update', handleCodeUpdate);
     socket.on('users-update', handleUsersUpdate);
     socket.on('user-joined', handleUserJoined);
     socket.on('user-left', handleUserLeft);
     socket.on('language-update', handleLanguageUpdate);
-    socket.on('sync-response', handleSyncResponse);
-    socket.on('error', handleError);
+    socket.on('error', (error) => toast.error(error.message));
 
-    // Clean up
     return () => {
-      socket.off('connect', handleConnect);
-      socket.off('document-state', handleDocumentState);
-      socket.off('code-update', handleCodeUpdate);
-      socket.off('users-update', handleUsersUpdate);
-      socket.off('user-joined', handleUserJoined);
-      socket.off('user-left', handleUserLeft);
-      socket.off('language-update', handleLanguageUpdate);
-      socket.off('sync-response', handleSyncResponse);
-      socket.off('error', handleError);
-      socket.disconnect();
+      socket.off('document-state');
+      socket.off('code-update');
+      socket.off('users-update');
+      socket.off('user-joined');
+      socket.off('user-left');
+      socket.off('language-update');
+      socket.off('error');
     };
-  }, [roomId, username, userId, showWelcomeToast]);
+  }, [roomId, username, userId]);
 
-  // FIXED: Prevent infinite loop with operation deduplication
   const handleEditorChange = (value, change) => {
     setCode(value);
     
-    if (change && change.changes && change.changes.length > 0 && !processingRef.current) {
-      processingRef.current = true;
-      
-      const operation = OTUtils.createOperationFromChange(change);
-      
-      if (operation && !OTUtils.isDuplicateOperation(operation)) {
-        socket.emit('code-change', operation, roomId);
+    if (editorTimeoutRef.current) clearTimeout(editorTimeoutRef.current);
+    
+    editorTimeoutRef.current = setTimeout(() => {
+      if (change && change.changes && change.changes.length > 0) {
+        const operation = OTUtils.createOperationFromChange(change);
+        if (operation && socketRef.current) {
+          socketRef.current.emit('code-change', operation, roomId);
+        }
       }
-      
-      setTimeout(() => {
-        processingRef.current = false;
-      }, 50);
-    }
+    }, 100);
   };
 
   const handleEditorMount = (editor) => {
     editorRef.current = editor;
-    
-    // Set up cursor tracking
     editor.onDidChangeCursorPosition((e) => {
       const position = editor.getModel().getOffsetAt(e.position);
       socket.emit('cursor-update', position, roomId);
     });
-
-    // Focus the editor
     editor.focus();
   };
 
@@ -1178,154 +805,93 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
     socket.emit('language-change', newLanguage, roomId);
   };
 
-  // FIXED: Handle program input via modal
   const handleRunCode = async () => {
     if (!code.trim()) {
       toast.error('No code to run');
       return;
     }
 
-    // Check if code might need input (simple heuristic)
-    const needsInput = 
-      code.includes('input(') || 
-      code.includes('readline') || 
-      code.includes('Scanner') ||
-      code.includes('cin >>') ||
-      code.includes('scanf') ||
-      code.includes('gets(') ||
-      code.includes('fgets(');
-
-    if (needsInput) {
-      setPendingExecution({ code, language });
-      setShowInputPrompt(true);
-    } else {
-      await executeCode(code, language, '');
-    }
-  };
-
-  const executeCode = async (codeToRun, lang, inputData) => {
     setIsRunning(true);
-    setTerminalOutput(`$ Running ${lang} code...\n\n`);
+    setTerminalOutput('$ Running code...\n');
 
     try {
-      const response = await axios.post(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/execute`, {
-        code: codeToRun,
-        language: lang,
-        input: inputData
+      const response = await axios.post(`${process.env.REACT_APP_API_URL}/execute`, {
+        code,
+        language,
+        input: programInput
       });
 
       if (response.data.success) {
-        setTerminalOutput(prev => prev + '✓ Execution successful!\n\n' + response.data.output);
-        toast.success('Code executed successfully!');
+        setTerminalOutput('✓ Execution successful!\n' + response.data.output);
+        toast.success('Code executed!');
       } else {
-        setTerminalOutput(prev => prev + '✗ Execution failed!\n\n' + response.data.output);
-        toast.error('Code execution failed');
+        setTerminalOutput('✗ Execution failed!\n' + response.data.output);
+        toast.error('Execution failed');
       }
     } catch (error) {
-      setTerminalOutput(prev => prev + '✗ Error: ' + (error.response?.data?.output || error.message));
+      setTerminalOutput('✗ Error: ' + (error.response?.data?.output || error.message));
       toast.error('Failed to execute code');
     } finally {
       setIsRunning(false);
     }
   };
 
-  const handleInputSubmit = (inputData) => {
-    if (pendingExecution) {
-      executeCode(pendingExecution.code, pendingExecution.language, inputData);
-      setPendingExecution(null);
-    }
-  };
-
-  // FIXED: Use proper AI generation endpoint
   const handleAIRequest = async (prompt) => {
-    if (prompt.trim()) {
-      setIsAnalyzing(true);
-      try {
-        const response = await axios.post(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/ai/generate`, {
-          prompt,
-          language,
-          context: code
-        });
-        
-        if (response.data.success && response.data.completion) {
-          setAiResponse(response.data.completion);
-          toast.success('Code generated successfully!');
-        } else {
-          setAiResponse('// Failed to generate code. Please try again.');
-          toast.error('AI generation failed');
-        }
-      } catch (error) {
-        console.error('AI error:', error);
-        setAiResponse(`// Error: ${error.message}\n\n// Using fallback response\n\n` + getFallbackCode(prompt, language));
-        toast.error('AI service error, using fallback');
-      } finally {
-        setIsAnalyzing(false);
-        setAiPrompt('');
+    if (!prompt.trim()) return;
+    
+    setIsAnalyzing(true);
+    try {
+      const response = await axios.post(`${process.env.REACT_APP_API_URL}/ai/generate`, {
+        prompt,
+        language,
+        context: code
+      });
+      
+      if (response.data.success) {
+        setAiResponse(response.data.code);
+        toast.success('Code generated!');
+      } else {
+        setAiResponse('// Error generating code. Please try again.');
       }
+    } catch (error) {
+      setAiResponse(`// Error: ${error.message}`);
+      toast.error('AI service unavailable');
+    } finally {
+      setIsAnalyzing(false);
+      setAiPrompt('');
     }
-  };
-
-  // Fallback code generator
-  const getFallbackCode = (prompt, lang) => {
-    if (lang === 'c' && prompt.toLowerCase().includes('star pattern')) {
-      return `#include <stdio.h>
-
-void printPyramid(int n) {
-    for (int i = 1; i <= n; i++) {
-        // Print spaces
-        for (int j = 1; j <= n - i; j++) {
-            printf(" ");
-        }
-        // Print stars
-        for (int j = 1; j <= 2 * i - 1; j++) {
-            printf("*");
-        }
-        printf("\\n");
-    }
-}
-
-int main() {
-    int rows = 5;
-    printPyramid(rows);
-    return 0;
-}`;
-    }
-    return `// Generated code for: ${prompt}\n// Please check your internet connection\n// or try again later.`;
   };
 
   const handleCodeAnalysis = async () => {
-    if (code.trim()) {
-      setIsAnalyzing(true);
-      try {
-        const response = await axios.post(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/ai/analyze`, {
-          code,
-          language
-        });
-        
-        if (response.data.success && response.data.analysis) {
-          setAiResponse(response.data.analysis);
-          toast.success('Code analysis complete!');
-        } else {
-          setAiResponse('// Analysis service is currently unavailable.');
-          toast.error('Analysis service error');
-        }
-      } catch (error) {
-        setAiResponse(`// Analysis Error: ${error.message}`);
-        toast.error('Analysis failed');
-      } finally {
-        setIsAnalyzing(false);
-      }
+    if (!code.trim()) {
+      toast.error('No code to analyze');
+      return;
     }
-  };
-
-  const syncDocument = () => {
-    setIsSyncing(true);
-    socket.emit('sync-request', documentVersion, roomId);
+    
+    setIsAnalyzing(true);
+    try {
+      const response = await axios.post(`${process.env.REACT_APP_API_URL}/ai/analyze`, {
+        code,
+        language
+      });
+      
+      if (response.data.success) {
+        setAiResponse(response.data.analysis);
+        toast.success('Analysis complete!');
+      } else {
+        setAiResponse('Analysis failed. Please try again.');
+      }
+    } catch (error) {
+      setAiResponse(`Analysis error: ${error.message}`);
+      toast.error('Analysis failed');
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const shareRoom = () => {
     navigator.clipboard.writeText(roomId);
-    toast.success('Room ID copied to clipboard!');
+    toast.success('Room ID copied!');
   };
 
   const downloadCode = () => {
@@ -1333,141 +899,56 @@ int main() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `unified-ide-${roomId}-${Date.now()}.${LANGUAGE_OPTIONS.find(l => l.id === language)?.extension || 'txt'}`;
-    document.body.appendChild(a);
+    a.download = `code.${LANGUAGE_OPTIONS.find(l => l.id === language)?.extension || 'txt'}`;
     a.click();
-    document.body.removeChild(a);
     URL.revokeObjectURL(url);
     toast.success('Code downloaded!');
   };
 
-  const saveProject = async () => {
-    try {
-      const response = await axios.post(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/projects`, {
-        name: `Project ${roomId}`,
-        description: `Collaborative project from room ${roomId}`,
-        language,
-        code,
-        isPublic: false
-      });
-      
-      if (response.data.success) {
-        toast.success('Project saved successfully!');
-      }
-    } catch (error) {
-      toast.error('Failed to save project');
-    }
-  };
-
-  const clearTerminal = () => {
-    setTerminalOutput('');
-  };
+  const clearTerminal = () => setTerminalOutput('');
+  const handleProgramInput = (input) => setProgramInput(prev => prev + input + '\n');
 
   const leaveRoom = () => {
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-    }
+    socket.disconnect();
     onLeaveRoom();
   };
 
-  const currentUserCount = onlineUsers.length;
-  const isCurrentUser = (user) => user.username === username;
-
   return (
     <div className="app">
-      <InputPrompt 
-        isOpen={showInputPrompt}
-        onClose={() => {
-          setShowInputPrompt(false);
-          setPendingExecution(null);
-        }}
-        onSubmit={handleInputSubmit}
-      />
-
       <header className="app-header">
         <div className="header-left">
-          <Code2 className="logo-icon" style={{ padding: '6px' }} />
+          <Code2 className="logo-icon" />
           <h1>Unified IDE</h1>
         </div>
         
         <div className="header-center">
           <div className="room-info">
-            <span className="user-info">
-              Room: <strong style={{ color: '#00d4aa' }}>{roomId}</strong>
-            </span>
-            <span className="user-info">
-              as <strong>{username}</strong>
-            </span>
-            
-            <LanguageSelector 
-              currentLanguage={language} 
-              onLanguageChange={handleLanguageChange} 
-            />
-            
-            <button 
-              onClick={syncDocument} 
-              className="btn btn-sm btn-secondary"
-              disabled={isSyncing}
-              title="Sync with latest version"
-            >
-              <RefreshCw size={14} className={isSyncing ? 'spin' : ''} />
-              {isSyncing ? 'Syncing...' : `v${documentVersion}`}
-            </button>
-            
-            <button onClick={shareRoom} className="btn btn-sm btn-secondary" title="Share room">
-              <Share2 size={14} />
-              Share
-            </button>
-            
-            <button onClick={saveProject} className="btn btn-sm btn-success" title="Save project">
-              <Save size={14} />
-              Save
-            </button>
-            
-            <button onClick={downloadCode} className="btn btn-sm btn-secondary" title="Download code">
-              <Download size={14} />
-              Export
-            </button>
+            <span>Room: <strong>{roomId}</strong></span>
+            <span>as <strong>{username}</strong></span>
+            <LanguageSelector currentLanguage={language} onLanguageChange={handleLanguageChange} />
+            <button onClick={shareRoom} className="btn btn-sm btn-secondary"><Share2 size={14} /> Share</button>
+            <button onClick={downloadCode} className="btn btn-sm btn-secondary"><Download size={14} /> Export</button>
           </div>
         </div>
 
         <div className="header-right">
-          <div 
-            className="online-users-toggle"
-            onClick={() => setShowUsersPopup(!showUsersPopup)}
-          >
+          <div className="online-users-toggle" onClick={() => setShowUsersPopup(!showUsersPopup)}>
             <Users size={18} />
-            <span>{currentUserCount} online</span>
+            <span>{onlineUsers.length} online</span>
           </div>
-
-          <button 
-            onClick={leaveRoom} 
-            className="btn btn-sm btn-warning"
-            title="Leave room"
-          >
-            <LogOut size={14} />
-            Leave
-          </button>
+          <button onClick={leaveRoom} className="btn btn-sm btn-warning"><LogOut size={14} /> Leave</button>
 
           {showUsersPopup && (
             <div className="users-popup">
               <div className="popup-header">
-                <h4>Online Users ({currentUserCount})</h4>
-                <button 
-                  onClick={() => setShowUsersPopup(false)}
-                  className="close-btn"
-                >
-                  <X size={16} />
-                </button>
+                <h4>Online Users ({onlineUsers.length})</h4>
+                <button onClick={() => setShowUsersPopup(false)} className="close-btn"><X size={16} /></button>
               </div>
               <div className="popup-users-list">
-                {onlineUsers.map((user, index) => (
-                  <div 
-                    key={user.id || index} 
-                    className={`popup-user-item ${isCurrentUser(user) ? 'current-user' : ''}`}
-                  >
+                {onlineUsers.map((user, i) => (
+                  <div key={i} className={`popup-user-item ${user.username === username ? 'current-user' : ''}`}>
                     <div className="user-avatar"></div>
-                    <span>{user.username} {isCurrentUser(user) && '(You)'}</span>
+                    <span>{user.username} {user.username === username && '(You)'}</span>
                   </div>
                 ))}
               </div>
@@ -1479,28 +960,13 @@ int main() {
       <div className="main-content">
         <div className="editor-section">
           <div className="editor-header">
-            <h3>
-              {LANGUAGE_OPTIONS.find(l => l.id === language)?.name || language} Editor • 
-              <span className={isSyncing ? 'status-syncing' : 'status-online'} style={{ marginLeft: '8px', fontSize: '12px' }}>
-                {isSyncing ? 'Syncing...' : 'Real-time Active'}
-              </span>
-            </h3>
+            <h3>{LANGUAGE_OPTIONS.find(l => l.id === language)?.name} Editor</h3>
             <div className="editor-actions">
-              <button 
-                onClick={handleRunCode} 
-                className="btn btn-success"
-                disabled={isRunning}
-              >
-                <Play size={16} />
-                {isRunning ? 'Running...' : 'Run Code'}
+              <button onClick={handleRunCode} className="btn btn-success" disabled={isRunning}>
+                <Play size={16} /> {isRunning ? 'Running...' : 'Run Code'}
               </button>
-              <button 
-                onClick={handleCodeAnalysis} 
-                className="btn btn-warning"
-                disabled={isAnalyzing}
-              >
-                <AlertTriangle size={16} />
-                {isAnalyzing ? 'Analyzing...' : 'Analyze'}
+              <button onClick={handleCodeAnalysis} className="btn btn-warning" disabled={isAnalyzing}>
+                <AlertTriangle size={16} /> Analyze
               </button>
             </div>
           </div>
@@ -1519,39 +985,19 @@ int main() {
                 wordWrap: 'on',
                 automaticLayout: true,
                 scrollBeyondLastLine: false,
-                renderLineHighlight: 'all',
-                cursorBlinking: 'smooth',
-                cursorSmoothCaretAnimation: 'on',
-                smoothScrolling: true,
-                formatOnPaste: true,
-                formatOnType: true,
-                suggestOnTriggerCharacters: true,
-                acceptSuggestionOnEnter: 'on',
-                tabCompletion: 'on',
-                wordBasedSuggestions: true,
-                parameterHints: { enabled: true },
+                renderLineHighlight: 'all'
               }}
             />
           </div>
         </div>
 
         <div className={`sidebar ${isSidebarExpanded ? '' : 'collapsed'}`}>
-          {!isSidebarExpanded ? (
-            <button 
-              className="sidebar-toggle"
-              onClick={() => setIsSidebarExpanded(true)}
-            >
-              <ChevronLeft size={20} />
-            </button>
-          ) : (
+          <button className="sidebar-toggle" onClick={() => setIsSidebarExpanded(!isSidebarExpanded)}>
+            {isSidebarExpanded ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+          </button>
+          
+          {isSidebarExpanded && (
             <>
-              <button 
-                className="sidebar-toggle"
-                onClick={() => setIsSidebarExpanded(false)}
-              >
-                <ChevronRight size={20} />
-              </button>
-              
               <AISection
                 aiPrompt={aiPrompt}
                 setAiPrompt={setAiPrompt}
@@ -1568,23 +1014,14 @@ int main() {
                 onToggle={() => setTerminalExpanded(!terminalExpanded)}
                 isRunning={isRunning}
               />
+              
+              <TerminalInput onSendInput={handleProgramInput} isRunning={isRunning} />
             </>
           )}
         </div>
       </div>
 
-      <ToastContainer
-        position="bottom-right"
-        autoClose={3000}
-        hideProgressBar={false}
-        newestOnTop
-        closeOnClick
-        rtl={false}
-        pauseOnFocusLoss
-        draggable
-        pauseOnHover
-        theme="dark"
-      />
+      <ToastContainer position="bottom-right" autoClose={3000} theme="dark" />
     </div>
   );
 }
@@ -1598,12 +1035,6 @@ function App() {
   const [currentUsername, setCurrentUsername] = useState('');
   const [currentUserId, setCurrentUserId] = useState(null);
 
-  useEffect(() => {
-    if (!isAuthenticated && currentView !== 'landing' && currentView !== 'login' && currentView !== 'register') {
-      setCurrentView('landing');
-    }
-  }, [isAuthenticated, currentView]);
-
   const handleNavigate = (view) => {
     if ((view === 'create' || view === 'join') && !isAuthenticated) {
       setCurrentView('login');
@@ -1613,21 +1044,14 @@ function App() {
   };
 
   const handleLoginSuccess = (userData, redirectTo = null) => {
-    if (redirectTo === 'login') {
-      setCurrentView('login');
-    } else if (userData) {
-      if (redirectTo) {
-        setCurrentView(redirectTo);
-      } else {
-        setCurrentView('landing');
-      }
-    }
+    if (redirectTo === 'login') setCurrentView('login');
+    else if (userData) setCurrentView(redirectTo || 'landing');
   };
 
   const handleLogout = () => {
     logout();
     setCurrentView('landing');
-    toast.success('Logged out successfully');
+    toast.success('Logged out');
   };
 
   const handleJoinRoom = (roomId, username, userId = null) => {
@@ -1647,58 +1071,16 @@ function App() {
   switch (currentView) {
     case 'register':
       return <RegisterPage onBack={() => setCurrentView('landing')} onLoginSuccess={handleLoginSuccess} />;
-    
     case 'login':
-      return <LoginPage 
-        onBack={() => setCurrentView('landing')} 
-        onRegister={() => setCurrentView('register')} 
-        onLoginSuccess={handleLoginSuccess}
-      />;
-    
+      return <LoginPage onBack={() => setCurrentView('landing')} onRegister={() => setCurrentView('register')} onLoginSuccess={handleLoginSuccess} />;
     case 'create':
-      return <CreateRoomPage 
-        onBack={() => setCurrentView('landing')} 
-        onJoinRoom={handleJoinRoom}
-        user={user}
-      />;
-    
+      return <CreateRoomPage onBack={() => setCurrentView('landing')} onJoinRoom={handleJoinRoom} user={user} />;
     case 'join':
-      return <JoinRoomPage 
-        onBack={() => setCurrentView('landing')} 
-        onJoinRoom={handleJoinRoom}
-        user={user}
-      />;
-    
+      return <JoinRoomPage onBack={() => setCurrentView('landing')} onJoinRoom={handleJoinRoom} user={user} />;
     case 'editor':
-      return <EditorPage 
-        roomId={currentRoom} 
-        username={currentUsername}
-        userId={currentUserId}
-        onLeaveRoom={handleLeaveRoom}
-      />;
-    
+      return <EditorPage roomId={currentRoom} username={currentUsername} userId={currentUserId} onLeaveRoom={handleLeaveRoom} />;
     default:
-      return (
-        <>
-          <LandingPage 
-            onNavigate={handleNavigate}
-            user={user}
-            onLogout={handleLogout}
-          />
-          <ToastContainer
-            position="bottom-right"
-            autoClose={3000}
-            hideProgressBar={false}
-            newestOnTop
-            closeOnClick
-            rtl={false}
-            pauseOnFocusLoss
-            draggable
-            pauseOnHover
-            theme="dark"
-          />
-        </>
-      );
+      return <LandingPage onNavigate={handleNavigate} user={user} onLogout={handleLogout} />;
   }
 }
 
