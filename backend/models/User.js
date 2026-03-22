@@ -1,5 +1,4 @@
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
   username: {
@@ -30,11 +29,10 @@ const userSchema = new mongoose.Schema({
     type: Date
   }
 }, {
-  // Disable version key
-  versionKey: false
+  timestamps: true
 });
 
-// Remove password from JSON output
+// Remove password when converting to JSON
 userSchema.methods.toJSON = function() {
   const obj = this.toObject();
   delete obj.password;

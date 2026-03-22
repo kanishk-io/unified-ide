@@ -1,40 +1,58 @@
 const User = require('../models/User');
-const { generateToken } = require('../middleware/auth');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+// Generate JWT token
+const generateToken = (userId) => {
+  return jwt.sign(
+    { userId },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+  );
+};
 
 const authController = {
   // Register new user
   register: async (req, res) => {
     try {
+      console.log('📝 Registration request received');
+      console.log('Request body:', req.body);
+      
       const { username, email, password } = req.body;
       
-      console.log('📝 Registration attempt:', username, email);
-      
-      // Basic validation
+      // Validate input
       if (!username || !email || !password) {
+        console.log('❌ Missing fields:', { username: !!username, email: !!email, password: !!password });
         return res.status(400).json({ 
           success: false,
-          error: 'All fields are required' 
+          error: 'All fields are required: username, email, password' 
+        });
+      }
+      
+      if (password.length < 6) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'Password must be at least 6 characters' 
         });
       }
       
       // Check if user exists
-      const existing = await User.findOne({ 
-        $or: [{ email }, { username }] 
+      const existingUser = await User.findOne({ 
+        $or: [{ email: email.toLowerCase() }, { username }] 
       });
       
-      if (existing) {
+      if (existingUser) {
         return res.status(400).json({ 
           success: false,
           error: 'Username or email already exists' 
         });
       }
       
-      // Hash password MANUALLY (no pre-save hook)
+      // Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
       
-      // Create and save user
-      const user = new User({
+      // Create user
+      const user = new User({ 
         username: username.trim(),
         email: email.toLowerCase().trim(),
         password: hashedPassword,
@@ -42,31 +60,26 @@ const authController = {
       });
       
       await user.save();
-      console.log('✅ User saved:', user.username);
+      console.log('✅ User saved successfully:', user.username);
       
-      // Create token
+      // Generate token
       const token = generateToken(user._id.toString());
       
       res.status(201).json({
         success: true,
-        message: 'Registration successful!',
+        message: 'Account created successfully!',
         user: {
           id: user._id,
           username: user.username,
-          email: user.email
+          email: user.email,
+          createdAt: user.createdAt
         },
         token
       });
       
     } catch (error) {
       console.error('❌ Registration error:', error.message);
-      
-      if (error.name === 'ValidationError') {
-        return res.status(400).json({ 
-          success: false,
-          error: 'Validation failed: ' + error.message 
-        });
-      }
+      console.error('Stack:', error.stack);
       
       if (error.code === 11000) {
         return res.status(400).json({ 
@@ -77,7 +90,7 @@ const authController = {
       
       res.status(500).json({ 
         success: false,
-        error: 'Registration failed. Please try again.' 
+        error: 'Registration failed: ' + error.message
       });
     }
   },
@@ -85,6 +98,9 @@ const authController = {
   // Login user
   login: async (req, res) => {
     try {
+      console.log('🔐 Login request received');
+      console.log('Request body:', req.body);
+      
       const { email, password } = req.body;
       
       if (!email || !password) {
@@ -131,7 +147,7 @@ const authController = {
       console.error('Login error:', error);
       res.status(500).json({ 
         success: false,
-        error: 'Login failed' 
+        error: 'Login failed: ' + error.message
       });
     }
   },
@@ -144,7 +160,8 @@ const authController = {
         user: {
           id: req.user._id,
           username: req.user.username,
-          email: req.user.email
+          email: req.user.email,
+          lastLogin: req.user.lastLogin
         }
       });
     } catch (error) {
@@ -160,12 +177,12 @@ const authController = {
     try {
       res.json({
         success: true,
-        message: 'Logged out'
+        message: 'Logged out successfully'
       });
     } catch (error) {
       res.status(500).json({ 
         success: false,
-        error: 'Logout error' 
+        error: 'Logout failed' 
       });
     }
   }

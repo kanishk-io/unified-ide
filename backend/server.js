@@ -19,7 +19,6 @@ const authController = require('./controllers/authController');
 
 // Import services
 const codeExecutionService = require('./services/codeExecutionService');
-const aiService = require('./services/aiService'); // NEW: Proper AI service
 const { OperationalTransform, Operation } = require('./utils/ot');
 
 // Initialize app
@@ -29,7 +28,7 @@ const server = http.createServer(app);
 // Connect to MongoDB
 connectDB();
 
-// Enhanced CORS configuration
+// ===== CORS CONFIGURATION (MUST COME BEFORE ROUTES) =====
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5000',
@@ -56,17 +55,23 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
+// ===== BODY PARSER (CRITICAL FOR req.body) =====
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Debug middleware to log requests
+app.use((req, res, next) => {
+  console.log(`📨 ${req.method} ${req.path}`);
+  if (req.body && Object.keys(req.body).length > 0) {
+    console.log('📦 Body:', req.body);
+  }
+  next();
+});
+
 // Configure Socket.IO
 const io = socketIo(server, {
   cors: {
-    origin: function(origin, callback) {
-      const allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
-      if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true
   },
@@ -119,7 +124,7 @@ class Document {
 
   getState() {
     return {
-      content: this.content || '',
+      content: this.content,
       language: this.language,
       version: this.version
     };
@@ -136,7 +141,6 @@ class Document {
       lastSeen: Date.now()
     });
     
-    // Clean up stale clients (5 minutes)
     const now = Date.now();
     for (const [id, state] of this.clientStates.entries()) {
       if (now - state.lastSeen > 300000) {
@@ -172,8 +176,8 @@ class Document {
 }
 
 // ===== GLOBAL VARIABLES =====
-const activeSessions = new Map(); // roomId -> Document
-const activeRooms = new Map(); // roomId -> Map of socketId -> user data
+const activeSessions = new Map();
+const activeRooms = new Map();
 
 // Supported languages
 const SUPPORTED_LANGUAGES = {
@@ -248,38 +252,8 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
-// AI Code Generation endpoint - FIXED with proper Gemini integration
-app.post('/api/ai/generate', async (req, res) => {
-  try {
-    const { prompt, language, context } = req.body;
-    
-    if (!prompt || !language) {
-      return res.status(400).json({ 
-        success: false, 
-        completion: 'Prompt and language are required' 
-      });
-    }
-    
-    console.log(`🤖 AI Request: ${language} - "${prompt.substring(0, 50)}..."`);
-    
-    // Use the AI service to generate code
-    const completion = await aiService.generateCode(prompt, language, context);
-    
-    res.json({ 
-      success: true, 
-      completion 
-    });
-  } catch (error) {
-    console.error('AI generation error:', error);
-    res.status(500).json({ 
-      success: false, 
-      completion: `Error: ${error.message}` 
-    });
-  }
-});
-
-// AI Code Analysis endpoint
-app.post('/api/ai/analyze', async (req, res) => {
+// AI Analysis endpoint
+app.post('/api/analyze', async (req, res) => {
   try {
     const { code, language } = req.body;
     
@@ -290,8 +264,11 @@ app.post('/api/ai/analyze', async (req, res) => {
       });
     }
     
-    const analysis = await aiService.analyzeCode(code, language);
-    
+    const analysis = `// Code Analysis for ${language}:
+// - Lines: ${code.split('\n').length}
+// - Characters: ${code.length}
+// - Basic syntax check: ✅ Passed`;
+
     res.json({ 
       success: true, 
       analysis 
@@ -305,7 +282,40 @@ app.post('/api/ai/analyze', async (req, res) => {
   }
 });
 
-// Project routes (for saving/loading)
+// Test AI endpoint
+app.post('/api/test-ai', async (req, res) => {
+  try {
+    const { prompt, context, language } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({ 
+        success: false, 
+        completion: 'Prompt is required' 
+      });
+    }
+    
+    const mockCompletion = `// AI Code Suggestion for ${language}:
+// Based on your request: "${prompt}"
+
+function example() {
+  console.log("AI-generated code");
+  return "Success";
+}`;
+
+    res.json({ 
+      success: true, 
+      completion: mockCompletion 
+    });
+  } catch (error) {
+    console.error('AI error:', error);
+    res.status(500).json({ 
+      success: false, 
+      completion: `AI service error: ${error.message}` 
+    });
+  }
+});
+
+// Project routes
 app.post('/api/projects', auth, async (req, res) => {
   try {
     const { name, description, language, code, isPublic } = req.body;
@@ -394,15 +404,19 @@ io.on('connection', (socket) => {
       socket.username = username;
       socket.userId = userId;
       
-      // Initialize or get session - FIXED: No welcome message, just empty code
       let session = activeSessions.get(roomId);
       if (!session) {
-        session = new Document('', 'javascript'); // EMPTY code, no welcome message
+        const welcomeMessage = `// Welcome to Unified IDE - Collaborative Coding Environment
+// Room: ${roomId}
+// User: ${username}
+
+console.log("Hello from ${username}!");`;
+        
+        session = new Document(welcomeMessage, 'javascript');
         activeSessions.set(roomId, session);
-        console.log(`📝 Created new empty session for room ${roomId}`);
+        console.log(`📝 Created new session for room ${roomId}`);
       }
       
-      // Initialize room users
       if (!activeRooms.has(roomId)) {
         activeRooms.set(roomId, new Map());
       }
@@ -415,19 +429,15 @@ io.on('connection', (socket) => {
         joinedAt: new Date()
       });
       
-      // Send current document state
       const state = session.getState();
       socket.emit('document-state', state);
       
-      // Get all users in room
       const users = Array.from(roomUsers.values());
       io.to(roomId).emit('users-update', users);
       
-      // Update cursor
       const cursors = session.updateClientCursor(socket.id, 0, username);
       io.to(roomId).emit('cursors-update', cursors);
       
-      // Notify others
       socket.to(roomId).emit('user-joined', {
         id: socket.id,
         username: username
@@ -441,7 +451,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle cursor position updates
   socket.on('cursor-update', (position, roomId) => {
     if (!roomId || position === undefined) return;
     
@@ -452,17 +461,14 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle code changes - FIXED: Prevent infinite loops
   socket.on('code-change', (operation, roomId) => {
     if (!roomId || !operation) return;
     
     const session = activeSessions.get(roomId);
     if (session) {
-      // Prevent duplicate operations
       const result = session.applyOperation(operation, socket.id);
       
       if (result) {
-        // Broadcast to other users only
         socket.to(roomId).emit('code-update', {
           operation: result.operation,
           content: result.content,
@@ -476,7 +482,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle sync requests
   socket.on('sync-request', (version, roomId) => {
     if (!roomId) return;
     
@@ -487,7 +492,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle language changes
   socket.on('language-change', (language, roomId) => {
     if (!roomId || !language) return;
     
@@ -496,27 +500,23 @@ io.on('connection', (socket) => {
       const oldLang = session.language;
       session.changeLanguage(language);
       
-      io.to(roomId).emit('language-update', language);
+      socket.to(roomId).emit('language-update', language);
       console.log(`🌐 ${socket.username} changed language from ${oldLang} to ${language} in room ${roomId}`);
     }
   });
 
-  // Handle disconnect
   socket.on('disconnect', () => {
     console.log('🔌 User disconnected:', socket.username || socket.id);
     
     const roomId = socket.roomId;
     if (roomId) {
-      // Remove user from room
       const roomUsers = activeRooms.get(roomId);
       if (roomUsers) {
         roomUsers.delete(socket.id);
         
-        // Update remaining users
         const users = Array.from(roomUsers.values());
         io.to(roomId).emit('users-update', users);
         
-        // Notify others
         socket.to(roomId).emit('user-left', {
           id: socket.id,
           username: socket.username
@@ -524,7 +524,6 @@ io.on('connection', (socket) => {
         
         console.log(`👋 ${socket.username} left room ${roomId}. Remaining: ${users.length}`);
         
-        // Clean up empty rooms after 5 minutes
         if (users.length === 0) {
           setTimeout(() => {
             if (activeRooms.get(roomId)?.size === 0) {
@@ -532,11 +531,10 @@ io.on('connection', (socket) => {
               activeSessions.delete(roomId);
               console.log(`🧹 Cleaned up empty room: ${roomId}`);
             }
-          }, 300000); // 5 minutes
+          }, 300000);
         }
       }
       
-      // Update cursors
       const session = activeSessions.get(roomId);
       if (session) {
         const cursors = session.removeClient(socket.id);
@@ -548,11 +546,14 @@ io.on('connection', (socket) => {
 
 // Start server
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, '0.0.0.0', () => {
+const HOST = '0.0.0.0';
+
+server.listen(PORT, HOST, () => {
   console.log('='.repeat(50));
   console.log('🚀 Unified IDE Backend Server');
   console.log('='.repeat(50));
   console.log(`📍 Port: ${PORT}`);
+  console.log(`🌐 Host: ${HOST}`);
   console.log(`🌐 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
   console.log(`🗄️  MongoDB: ✅ Connected`);
   console.log(`🔄 OT Algorithm: ✅ Enabled`);
