@@ -4,7 +4,7 @@ import Editor from '@monaco-editor/react';
 import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import axios from 'axios';
-import { 
+import {
   Users, Code2, Bot, Play, Share2, X, ArrowLeft, ChevronDown,
   Terminal, Copy, Download, LogOut, LogIn, UserPlus,
   Sparkles, AlertTriangle, CheckCircle, ChevronRight, ChevronLeft,
@@ -13,7 +13,10 @@ import {
 import './App.css';
 import { useAuth } from './AuthContext';
 
-const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000', {
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000';
+
+const socket = io(SOCKET_URL, {
   transports: ['websocket', 'polling'],
   reconnection: true,
   reconnectionAttempts: 10,
@@ -23,19 +26,43 @@ const socket = io(process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000', {
 
 const LANGUAGE_OPTIONS = [
   { id: 'javascript', name: 'JavaScript', extension: 'js' },
-  { id: 'python', name: 'Python', extension: 'py' },
-  { id: 'java', name: 'Java', extension: 'java' },
-  { id: 'cpp', name: 'C++', extension: 'cpp' },
-  { id: 'c', name: 'C', extension: 'c' },
-  { id: 'csharp', name: 'C#', extension: 'cs' },
-  { id: 'php', name: 'PHP', extension: 'php' },
-  { id: 'ruby', name: 'Ruby', extension: 'rb' },
-  { id: 'go', name: 'Go', extension: 'go' },
-  { id: 'rust', name: 'Rust', extension: 'rs' },
+  { id: 'python',     name: 'Python',     extension: 'py' },
+  { id: 'java',       name: 'Java',       extension: 'java' },
+  { id: 'cpp',        name: 'C++',        extension: 'cpp' },
+  { id: 'c',          name: 'C',          extension: 'c' },
+  { id: 'csharp',     name: 'C#',         extension: 'cs' },
+  { id: 'php',        name: 'PHP',        extension: 'php' },
+  { id: 'ruby',       name: 'Ruby',       extension: 'rb' },
+  { id: 'go',         name: 'Go',         extension: 'go' },
+  { id: 'rust',       name: 'Rust',       extension: 'rs' },
   { id: 'typescript', name: 'TypeScript', extension: 'ts' },
-  { id: 'html', name: 'HTML', extension: 'html' },
-  { id: 'css', name: 'CSS', extension: 'css' }
+  { id: 'html',       name: 'HTML',       extension: 'html' },
+  { id: 'css',        name: 'CSS',        extension: 'css' }
 ];
+
+// Maps file extension → language id
+const EXT_TO_LANGUAGE = {
+  js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  py: 'python', pyw: 'python',
+  java: 'java',
+  cpp: 'cpp', cc: 'cpp', cxx: 'cpp',
+  c: 'c', h: 'c',
+  cs: 'csharp',
+  php: 'php',
+  rb: 'ruby',
+  go: 'go',
+  rs: 'rust',
+  ts: 'typescript', tsx: 'typescript',
+  html: 'html', htm: 'html',
+  css: 'css'
+};
+
+function getLanguageFromFileName(fileName) {
+  const parts = fileName.split('.');
+  if (parts.length < 2) return null; // no extension
+  const ext = parts[parts.length - 1].toLowerCase();
+  return EXT_TO_LANGUAGE[ext] || null;
+}
 
 // ===== AUTH COMPONENTS =====
 
@@ -120,7 +147,6 @@ function RegisterPage({ onBack, onLoginSuccess }) {
     e.preventDefault();
     setError('');
     setLoading(true);
-    
     const result = await register(username, email, password);
     if (result.success) {
       toast.success('Registration successful!');
@@ -136,14 +162,29 @@ function RegisterPage({ onBack, onLoginSuccess }) {
       <div className="auth-card">
         <div className="auth-header">
           <button onClick={onBack} className="back-btn"><ArrowLeft size={16} /> Back</button>
-          <div className="logo-container"><div className="logo-icon"><UserPlus size={32} /></div><h1>Create Account</h1><p>Join the collaborative coding experience</p></div>
+          <div className="logo-container">
+            <div className="logo-icon"><UserPlus size={32} /></div>
+            <h1>Create Account</h1>
+            <p>Join the collaborative coding experience</p>
+          </div>
         </div>
         <form onSubmit={handleSubmit} className="auth-form">
-          <div className="input-group"><label>Username</label><input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="auth-input" placeholder="Choose a username" required /></div>
-          <div className="input-group"><label>Email</label><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="auth-input" placeholder="your@email.com" required /></div>
-          <div className="input-group"><label>Password</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="auth-input" placeholder="At least 6 characters" required /></div>
+          <div className="input-group">
+            <label>Username</label>
+            <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="auth-input" placeholder="Choose a username" required />
+          </div>
+          <div className="input-group">
+            <label>Email</label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="auth-input" placeholder="your@email.com" required />
+          </div>
+          <div className="input-group">
+            <label>Password</label>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="auth-input" placeholder="At least 6 characters" required />
+          </div>
           {error && <div className="auth-error">{error}</div>}
-          <button type="submit" className="btn btn-primary btn-full" disabled={loading}>{loading ? 'Creating...' : 'Register'}</button>
+          <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
+            {loading ? 'Creating...' : 'Register'}
+          </button>
         </form>
         <div className="divider">Already have an account?</div>
         <button onClick={() => onLoginSuccess(null, 'login')} className="btn btn-secondary btn-full">Login</button>
@@ -163,7 +204,6 @@ function LoginPage({ onBack, onRegister, onLoginSuccess }) {
     e.preventDefault();
     setError('');
     setLoading(true);
-    
     const result = await login(email, password);
     if (result.success) {
       toast.success('Login successful!');
@@ -179,13 +219,25 @@ function LoginPage({ onBack, onRegister, onLoginSuccess }) {
       <div className="auth-card">
         <div className="auth-header">
           <button onClick={onBack} className="back-btn"><ArrowLeft size={16} /> Back</button>
-          <div className="logo-container"><div className="logo-icon"><LogIn size={32} /></div><h1>Welcome Back</h1><p>Login to continue coding</p></div>
+          <div className="logo-container">
+            <div className="logo-icon"><LogIn size={32} /></div>
+            <h1>Welcome Back</h1>
+            <p>Login to continue coding</p>
+          </div>
         </div>
         <form onSubmit={handleSubmit} className="auth-form">
-          <div className="input-group"><label>Email</label><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="auth-input" placeholder="your@email.com" required /></div>
-          <div className="input-group"><label>Password</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="auth-input" placeholder="Your password" required /></div>
+          <div className="input-group">
+            <label>Email</label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="auth-input" placeholder="your@email.com" required />
+          </div>
+          <div className="input-group">
+            <label>Password</label>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="auth-input" placeholder="Your password" required />
+          </div>
           {error && <div className="auth-error">{error}</div>}
-          <button type="submit" className="btn btn-primary btn-full" disabled={loading}>{loading ? 'Logging in...' : 'Login'}</button>
+          <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
+            {loading ? 'Logging in...' : 'Login'}
+          </button>
         </form>
         <div className="divider">Don't have an account?</div>
         <button onClick={onRegister} className="btn btn-secondary btn-full">Create Account</button>
@@ -216,14 +268,28 @@ function CreateRoomPage({ onBack, onJoinRoom, user }) {
       <div className="auth-card">
         <div className="auth-header">
           <button onClick={onBack} className="back-btn"><ArrowLeft size={16} /> Back</button>
-          <div className="logo-container"><div className="logo-icon"><Plus size={32} /></div><h1>Create Room</h1><p>Start a new collaborative session</p></div>
+          <div className="logo-container">
+            <div className="logo-icon"><Plus size={32} /></div>
+            <h1>Create Room</h1>
+            <p>Start a new collaborative session</p>
+          </div>
         </div>
         <div className="auth-form">
-          <div className="input-group"><label>Room ID</label><div style={{ display: 'flex', gap: '8px' }}><input type="text" value={roomId} onChange={(e) => setRoomId(e.target.value.toUpperCase())} className="auth-input" placeholder="Enter room ID or generate" /><button onClick={generateRoomId} className="btn btn-secondary">Generate</button></div></div>
-          <button onClick={handleCreate} className="btn btn-primary btn-full" disabled={!roomId || creating}>{creating ? 'Creating...' : 'Create Room'}</button>
+          <div className="input-group">
+            <label>Room ID</label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input type="text" value={roomId} onChange={(e) => setRoomId(e.target.value.toUpperCase())} className="auth-input" placeholder="Enter room ID or generate" />
+              <button onClick={generateRoomId} className="btn btn-secondary">Generate</button>
+            </div>
+          </div>
+          <button onClick={handleCreate} className="btn btn-primary btn-full" disabled={!roomId || creating}>
+            {creating ? 'Creating...' : 'Create Room'}
+          </button>
         </div>
         <div className="divider">Share the Room ID with your team</div>
-        <div className="features-list"><div className="feature-item"><Users size={14} /><span>Real-time collaboration</span></div></div>
+        <div className="features-list">
+          <div className="feature-item"><Users size={14} /><span>Real-time collaboration</span></div>
+        </div>
       </div>
     </div>
   );
@@ -244,11 +310,20 @@ function JoinRoomPage({ onBack, onJoinRoom, user }) {
       <div className="auth-card">
         <div className="auth-header">
           <button onClick={onBack} className="back-btn"><ArrowLeft size={16} /> Back</button>
-          <div className="logo-container"><div className="logo-icon"><Users size={32} /></div><h1>Join Room</h1><p>Enter a room code to collaborate</p></div>
+          <div className="logo-container">
+            <div className="logo-icon"><Users size={32} /></div>
+            <h1>Join Room</h1>
+            <p>Enter a room code to collaborate</p>
+          </div>
         </div>
         <div className="auth-form">
-          <div className="input-group"><label>Room ID</label><input type="text" value={roomId} onChange={(e) => setRoomId(e.target.value.toUpperCase())} className="auth-input" placeholder="Enter room code" autoComplete="off" /></div>
-          <button onClick={handleJoin} className="btn btn-primary btn-full" disabled={!roomId || joining}>{joining ? 'Joining...' : 'Join Room'}</button>
+          <div className="input-group">
+            <label>Room ID</label>
+            <input type="text" value={roomId} onChange={(e) => setRoomId(e.target.value.toUpperCase())} className="auth-input" placeholder="Enter room code" autoComplete="off" />
+          </div>
+          <button onClick={handleJoin} className="btn btn-primary btn-full" disabled={!roomId || joining}>
+            {joining ? 'Joining...' : 'Join Room'}
+          </button>
         </div>
       </div>
     </div>
@@ -257,14 +332,29 @@ function JoinRoomPage({ onBack, onJoinRoom, user }) {
 
 // ===== EDITOR COMPONENTS =====
 
+// Language selector – opens as a floating dropdown overlay, doesn't push the header
 function LanguageSelector({ currentLanguage, onLanguageChange }) {
   const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
   const currentLang = LANGUAGE_OPTIONS.find(l => l.id === currentLanguage) || LANGUAGE_OPTIONS[0];
-  
+
+  // Close dropdown if user clicks outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
   return (
-    <div className="language-selector">
+    <div className="language-selector" ref={dropdownRef}>
       <button className="language-dropdown-btn" onClick={() => setIsOpen(!isOpen)}>
-        <Code2 size={14} /><span>{currentLang.name}</span><ChevronDown size={14} />
+        <Code2 size={14} />
+        <span>{currentLang.name}</span>
+        <ChevronDown size={14} className={isOpen ? 'rotated' : ''} />
       </button>
       {isOpen && (
         <div className="language-dropdown">
@@ -287,17 +377,17 @@ function FileSystemSection({ roomId, currentFile, onFileSelect, socket: socketPr
   const [files, setFiles] = useState(['main.js']);
   const [isExpanded, setIsExpanded] = useState(true);
   const [newFileName, setNewFileName] = useState('');
-  
+
   useEffect(() => {
     if (propFiles && propFiles.length > 0) setFiles(propFiles);
   }, [propFiles]);
-  
+
   useEffect(() => {
     if (!socketProp) return;
     socketProp.on('files-list', (fileList) => setFiles(fileList));
     return () => { socketProp.off('files-list'); };
   }, [socketProp]);
-  
+
   const handleCreateFile = () => {
     if (!newFileName.trim()) return;
     const newFile = newFileName.trim();
@@ -306,11 +396,13 @@ function FileSystemSection({ roomId, currentFile, onFileSelect, socket: socketPr
     onFileSelect(newFile);
     toast.success(`Created ${newFile}`);
   };
-  
+
   return (
     <div className="sidebar-section">
       <div className="section-header" onClick={() => setIsExpanded(!isExpanded)}>
-        <FolderPlus className="section-icon" /><h3>Files ({files.length})</h3><ChevronRight className={`section-toggle ${isExpanded ? 'rotated' : ''}`} size={14} />
+        <FolderPlus className="section-icon" />
+        <h3>Files ({files.length})</h3>
+        <ChevronRight className={`section-toggle ${isExpanded ? 'rotated' : ''}`} size={14} />
       </div>
       {isExpanded && (
         <div className="section-content">
@@ -324,7 +416,9 @@ function FileSystemSection({ roomId, currentFile, onFileSelect, socket: socketPr
               style={{ padding: '6px 10px', fontSize: '11px' }}
               onKeyPress={(e) => e.key === 'Enter' && handleCreateFile()}
             />
-            <button onClick={handleCreateFile} className="btn btn-sm btn-success" style={{ padding: '6px 10px' }}><Plus size={12} /></button>
+            <button onClick={handleCreateFile} className="btn btn-sm btn-success" style={{ padding: '6px 10px' }}>
+              <Plus size={12} />
+            </button>
           </div>
           <div className="file-list">
             {files.map(file => (
@@ -333,7 +427,8 @@ function FileSystemSection({ roomId, currentFile, onFileSelect, socket: socketPr
                 className={`file-item ${currentFile === file ? 'active' : ''}`}
                 onClick={() => onFileSelect(file)}
               >
-                <FileCode size={12} /><span>{file}</span>
+                <FileCode size={12} />
+                <span>{file}</span>
                 {currentFile === file && <CheckCircle size={10} color="#00d4aa" />}
               </div>
             ))}
@@ -346,11 +441,13 @@ function FileSystemSection({ roomId, currentFile, onFileSelect, socket: socketPr
 
 function AISection({ aiPrompt, setAiPrompt, aiResponse, onRequestAI, language, isAnalyzing }) {
   const [isExpanded, setIsExpanded] = useState(true);
-  
+
   return (
     <div className="sidebar-section">
       <div className="section-header" onClick={() => setIsExpanded(!isExpanded)}>
-        <Bot className="section-icon" /><h3>AI Assistant</h3><ChevronRight className={`section-toggle ${isExpanded ? 'rotated' : ''}`} size={14} />
+        <Bot className="section-icon" />
+        <h3>AI Assistant</h3>
+        <ChevronRight className={`section-toggle ${isExpanded ? 'rotated' : ''}`} size={14} />
       </div>
       {isExpanded && (
         <div className="section-content">
@@ -386,7 +483,6 @@ function AISection({ aiPrompt, setAiPrompt, aiResponse, onRequestAI, language, i
   );
 }
 
-// Consolidated Terminal Component - Single terminal for both output and input
 function TerminalComponent({ output, onInput, onClear, isRunning }) {
   const [inputValue, setInputValue] = useState('');
   const terminalRef = useRef(null);
@@ -404,13 +500,6 @@ function TerminalComponent({ output, onInput, onClear, isRunning }) {
     }
   };
 
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendInput();
-    }
-  };
-
   return (
     <div className="sidebar-section">
       <div className="section-header" style={{ justifyContent: 'space-between' }}>
@@ -421,16 +510,27 @@ function TerminalComponent({ output, onInput, onClear, isRunning }) {
         <button onClick={onClear} className="btn btn-sm btn-secondary">Clear</button>
       </div>
       <div className="section-content">
-        <div className="terminal-output" ref={terminalRef} style={{ maxHeight: '250px', overflowY: 'auto', background: '#1e1e1e', color: '#d4d4d4', padding: '8px', borderRadius: '4px', fontFamily: 'monospace', fontSize: '12px' }}>
-          <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{output || '$ Ready'}</pre>
+        <div
+          className="terminal-output"
+          ref={terminalRef}
+          style={{
+            maxHeight: '250px', overflowY: 'auto',
+            background: '#1e1e1e', color: '#d4d4d4',
+            padding: '8px', borderRadius: '4px',
+            fontFamily: 'monospace', fontSize: '12px'
+          }}
+        >
+          <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {output || '$ Ready'}
+          </pre>
         </div>
         <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
           <input
             type="text"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder={isRunning ? "Enter program input..." : "Run code to enable input"}
+            onKeyPress={(e) => e.key === 'Enter' && handleSendInput()}
+            placeholder={isRunning ? 'Enter program input...' : 'Run code to enable input'}
             className="auth-input"
             style={{ flex: 1, fontSize: '12px', padding: '6px 10px' }}
             disabled={!isRunning}
@@ -446,7 +546,7 @@ function TerminalComponent({ output, onInput, onClear, isRunning }) {
         {isRunning && (
           <div className="running-indicator">
             <div className="loading-spinner"></div>
-            <span>Program running... waiting for input</span>
+            <span>Program running...</span>
           </div>
         )}
       </div>
@@ -456,104 +556,72 @@ function TerminalComponent({ output, onInput, onClear, isRunning }) {
 
 // ===== EDITOR PAGE =====
 function EditorPage({ roomId, username, userId, onLeaveRoom }) {
-  const [code, setCode] = useState('// Start coding here...');
-  const [language, setLanguage] = useState('javascript');
-  const [onlineUsers, setOnlineUsers] = useState([]);
-  const [aiPrompt, setAiPrompt] = useState('');
-  const [aiResponse, setAiResponse] = useState('');
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [code, setCode]                     = useState('// Start coding here...');
+  const [language, setLanguage]             = useState('javascript');
+  const [onlineUsers, setOnlineUsers]       = useState([]);
+  const [aiPrompt, setAiPrompt]             = useState('');
+  const [aiResponse, setAiResponse]         = useState('');
+  const [isAnalyzing, setIsAnalyzing]       = useState(false);
   const [showUsersPopup, setShowUsersPopup] = useState(false);
   const [terminalOutput, setTerminalOutput] = useState('');
-  const [isRunning, setIsRunning] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [pendingInput, setPendingInput] = useState('');
-  const [currentFile, setCurrentFile] = useState('main.js');
-  const [files, setFiles] = useState(['main.js']);
-  
-  const editorRef = useRef(null);
-  const socketRef = useRef(null);
-  const isRemoteUpdateRef = useRef(false);
-  const pendingOperationsRef = useRef([]);
+  const [isRunning, setIsRunning]           = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen]   = useState(true);
+  const [pendingInput, setPendingInput]     = useState('');
+  const [currentFile, setCurrentFile]       = useState('main.js');
+  const [files, setFiles]                   = useState(['main.js']);
+
+  const editorRef            = useRef(null);
+  const socketRef            = useRef(null);
+  const isRemoteUpdateRef    = useRef(false);
+  // Debounce timer for full-doc sync
+  const syncTimerRef         = useRef(null);
 
   useEffect(() => {
     socketRef.current = socket;
     socket.emit('join-room', { roomId, username, userId });
 
+    // Receive initial document state when joining a room
     const handleDocumentState = (state) => {
-      if (state.content && state.content !== code) {
-        isRemoteUpdateRef.current = true;
-        setCode(state.content);
-        setTimeout(() => { isRemoteUpdateRef.current = false; }, 100);
-      }
+      isRemoteUpdateRef.current = true;
+      if (state.content !== undefined) setCode(state.content);
       if (state.language) setLanguage(state.language);
+      setTimeout(() => { isRemoteUpdateRef.current = false; }, 100);
     };
 
-    const handleCodeUpdate = (update) => {
-      if (update.username !== username) {
-        isRemoteUpdateRef.current = true;
-        const { operation, content } = update;
-        
-        // Apply operation to editor if mounted
-        if (editorRef.current && operation) {
-          const model = editorRef.current.getModel();
-          if (model) {
-            try {
-              if (operation.type === 'insert') {
-                const position = model.getPositionAt(operation.position);
-                editorRef.current.executeEdits('remote', [{
-                  range: new window.monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
-                  text: operation.text,
-                  forceMoveMarkers: true
-                }]);
-              } else if (operation.type === 'delete') {
-                const startPos = model.getPositionAt(operation.position);
-                const endPos = model.getPositionAt(operation.position + operation.length);
-                editorRef.current.executeEdits('remote', [{
-                  range: new window.monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column),
-                  text: '',
-                  forceMoveMarkers: true
-                }]);
-              }
-            } catch (e) {
-              console.error('Apply op error:', e);
-            }
-          }
-        }
-        setCode(content);
-        setTimeout(() => { isRemoteUpdateRef.current = false; }, 100);
-      }
+    // Receive full document from another user's change
+    const handleCodeSynced = ({ code: remoteCode, username: remoteUser, fileName: remoteFile }) => {
+      if (remoteUser === username) return; // ignore echoes (shouldn't happen but just in case)
+      isRemoteUpdateRef.current = true;
+      setCode(remoteCode);
+      setTimeout(() => { isRemoteUpdateRef.current = false; }, 100);
     };
 
-    const handleUsersUpdate = (users) => setOnlineUsers(users);
-    const handleUserJoined = (userData) => {
-      toast.info(`${userData.username} joined the room`);
-    };
-    const handleUserLeft = (userData) => {
-      toast.info(`${userData.username} left the room`);
-    };
-    const handleLanguageUpdate = (newLanguage) => setLanguage(newLanguage);
+    const handleUsersUpdate    = (users) => setOnlineUsers(users);
+    const handleUserJoined     = (userData) => toast.info(`${userData.username} joined the room`);
+    const handleUserLeft       = (userData) => toast.info(`${userData.username} left the room`);
+    const handleLanguageUpdate = (newLang) => setLanguage(newLang);
+
     const handleFileContent = ({ content, fileName }) => {
-      if (fileName === currentFile) {
-        isRemoteUpdateRef.current = true;
-        setCode(content);
-        setTimeout(() => { isRemoteUpdateRef.current = false; }, 100);
-      }
+      isRemoteUpdateRef.current = true;
+      setCode(content);
+      setTimeout(() => { isRemoteUpdateRef.current = false; }, 100);
     };
+
     const handleFilesList = (fileList) => setFiles(fileList);
 
-    socket.on('document-state', handleDocumentState);
-    socket.on('code-update', handleCodeUpdate);
-    socket.on('users-update', handleUsersUpdate);
-    socket.on('user-joined', handleUserJoined);
-    socket.on('user-left', handleUserLeft);
+    socket.on('document-state',  handleDocumentState);
+    socket.on('code-synced',     handleCodeSynced);
+    socket.on('users-update',    handleUsersUpdate);
+    socket.on('user-joined',     handleUserJoined);
+    socket.on('user-left',       handleUserLeft);
     socket.on('language-update', handleLanguageUpdate);
-    socket.on('file-content', handleFileContent);
-    socket.on('files-list', handleFilesList);
-    socket.on('error', (error) => toast.error(error.message));
+    socket.on('file-content',    handleFileContent);
+    socket.on('files-list',      handleFilesList);
+    socket.on('error',           (error) => toast.error(error.message));
 
     return () => {
       socket.off('document-state');
-      socket.off('code-update');
+      socket.off('code-synced');
       socket.off('users-update');
       socket.off('user-joined');
       socket.off('user-left');
@@ -561,29 +629,27 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
       socket.off('file-content');
       socket.off('files-list');
       socket.off('error');
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     };
-  }, [roomId, username, userId, currentFile]);
+  }, [roomId, username, userId]);
 
-  // Handle editor changes with proper OT
-  const handleEditorChange = (value, ev) => {
+  // ── Full document sync on every keystroke (debounced 80ms) ──
+  // This replaces the old OT approach. Sends the entire document to the server
+  // which broadcasts it to all other users. Simple, reliable, no sync bugs.
+  const handleEditorChange = (value) => {
     if (isRemoteUpdateRef.current) return;
     setCode(value);
-    
-    // Send operation for collaborative sync
-    if (ev && ev.changes && ev.changes.length > 0 && socketRef.current) {
-      const change = ev.changes[0];
-      let operation = null;
-      
-      if (change.rangeLength > 0) {
-        operation = { type: 'delete', position: change.rangeOffset, length: change.rangeLength };
-      } else if (change.text) {
-        operation = { type: 'insert', position: change.rangeOffset, text: change.text };
+
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      if (socketRef.current) {
+        socketRef.current.emit('code-full-sync', {
+          code: value,
+          roomId,
+          fileName: currentFile
+        });
       }
-      
-      if (operation) {
-        socketRef.current.emit('code-change', { operation, roomId });
-      }
-    }
+    }, 80);
   };
 
   const handleEditorMount = (editor) => {
@@ -600,31 +666,32 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
     socket.emit('language-change', { language: newLanguage, roomId });
   };
 
+  // File select: switch file AND auto-detect language from extension
   const handleFileSelect = (fileName) => {
     setCurrentFile(fileName);
     socketRef.current.emit('file-switch', { roomId, fileName });
+
+    const detectedLang = getLanguageFromFileName(fileName);
+    if (detectedLang && detectedLang !== language) {
+      setLanguage(detectedLang);
+      socket.emit('language-change', { language: detectedLang, roomId });
+      toast.info(`Language set to ${LANGUAGE_OPTIONS.find(l => l.id === detectedLang)?.name || detectedLang}`);
+    }
   };
 
   const handleRunCode = async () => {
-    if (!code.trim()) {
-      toast.error('No code to run');
-      return;
-    }
-    
+    if (!code.trim()) { toast.error('No code to run'); return; }
     setIsRunning(true);
     setTerminalOutput('⏳ Running code...\n');
     setPendingInput('');
-    
+
     try {
-      const response = await axios.post(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/execute`, {
-        code,
-        language,
-        input: pendingInput
+      const response = await axios.post(`${API_URL}/execute`, {
+        code, language, input: pendingInput
       });
-      
+
       if (response.data.success) {
-        let output = response.data.output;
-        if (!output.trim()) output = '✓ Program executed successfully (no output)';
+        const output = response.data.output || '✓ Program executed successfully (no output)';
         setTerminalOutput(output);
         toast.success('Execution complete');
       } else {
@@ -632,7 +699,6 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
         toast.error('Execution failed');
       }
     } catch (error) {
-      console.error('Execution error:', error);
       setTerminalOutput(`✗ Error: ${error.response?.data?.output || error.message}`);
       toast.error('Execution error');
     } finally {
@@ -644,10 +710,8 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
     if (!prompt.trim()) return;
     setIsAnalyzing(true);
     try {
-      const response = await axios.post(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/ai/generate`, {
-        prompt,
-        language,
-        context: code
+      const response = await axios.post(`${API_URL}/ai/generate`, {
+        prompt, language, context: code
       });
       if (response.data.success) {
         setAiResponse(response.data.code);
@@ -657,7 +721,6 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
         toast.error(response.data.error || 'Generation failed');
       }
     } catch (error) {
-      console.error('AI error:', error);
       setAiResponse(`// Error: ${error.response?.data?.error || error.message}`);
       toast.error('AI service unavailable');
     } finally {
@@ -667,25 +730,18 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
   };
 
   const handleCodeAnalysis = async () => {
-    if (!code.trim()) {
-      toast.error('No code to analyze');
-      return;
-    }
+    if (!code.trim()) { toast.error('No code to analyze'); return; }
     setIsAnalyzing(true);
     try {
-      const response = await axios.post(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/ai/analyze`, {
-        code,
-        language
-      });
+      const response = await axios.post(`${API_URL}/ai/analyze`, { code, language });
       if (response.data.success) {
         setAiResponse(response.data.analysis);
         toast.success('Analysis complete!');
       } else {
-        setAiResponse(`Analysis failed: ${response.data.error || 'Unknown error'}`);
+        setAiResponse(`Analysis failed: ${response.data.analysis || response.data.error || 'Unknown error'}`);
         toast.error('Analysis failed');
       }
     } catch (error) {
-      console.error('Analysis error:', error);
       setAiResponse(`Analysis error: ${error.message}`);
       toast.error('Analysis failed');
     } finally {
@@ -697,20 +753,20 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
     navigator.clipboard.writeText(roomId);
     toast.success('Room ID copied!');
   };
-  
+
   const downloadCode = () => {
     const blob = new Blob([code], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${currentFile || 'code'}.${LANGUAGE_OPTIONS.find(l => l.id === language)?.extension || 'txt'}`;
+    a.download = currentFile || `code.${LANGUAGE_OPTIONS.find(l => l.id === language)?.extension || 'txt'}`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success('Code downloaded!');
   };
-  
+
   const clearTerminal = () => setTerminalOutput('');
-  
+
   const handleProgramInput = (input) => {
     setPendingInput(input);
     setTerminalOutput(prev => prev + `\n> ${input}\n`);
@@ -725,18 +781,22 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
     <div className="app">
       <header className="app-header">
         <div className="header-left">
-          <Code2 className="logo-icon" />
+          <Code2 className="logo-icon-sm" />
           <h1>Unified IDE</h1>
         </div>
+
+        {/* Header center – room info + language selector */}
         <div className="header-center">
           <div className="room-info">
             <span>Room: <strong>{roomId}</strong></span>
             <span>as <strong>{username}</strong></span>
+            {/* LanguageSelector is self-contained and opens as an overlay */}
             <LanguageSelector currentLanguage={language} onLanguageChange={handleLanguageChange} />
             <button onClick={shareRoom} className="btn btn-sm btn-secondary"><Share2 size={12} /> Share</button>
             <button onClick={downloadCode} className="btn btn-sm btn-secondary"><Download size={12} /> Export</button>
           </div>
         </div>
+
         <div className="header-right">
           <div className="online-users-toggle" onClick={() => setShowUsersPopup(!showUsersPopup)}>
             <Users size={16} /><span>{onlineUsers.length}</span>
@@ -760,7 +820,9 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
           )}
         </div>
       </header>
+
       <div className="main-content">
+        {/* Editor area */}
         <div className="editor-section">
           <div className="editor-header">
             <h3>{LANGUAGE_OPTIONS.find(l => l.id === language)?.name} • {currentFile}</h3>
@@ -791,10 +853,20 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
             />
           </div>
         </div>
+
+        {/* Sidebar */}
         <div className={`sidebar ${isSidebarOpen ? '' : 'collapsed'}`}>
-          <button className="sidebar-toggle-btn" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
-            {isSidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
-          </button>
+          {/* Toggle button row – always visible, never overlaps file section */}
+          <div className="sidebar-toggle-bar">
+            <button
+              className="sidebar-toggle-btn"
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+            >
+              {isSidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
+            </button>
+          </div>
+
           {isSidebarOpen && (
             <>
               <FileSystemSection
@@ -822,13 +894,13 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
           )}
         </div>
       </div>
+
       <ToastContainer
         position="bottom-right"
         autoClose={3000}
         hideProgressBar={false}
         newestOnTop
         closeOnClick
-        rtl={false}
         pauseOnFocusLoss={false}
         draggable
         pauseOnHover
@@ -841,11 +913,22 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
 
 // ===== MAIN APP =====
 function App() {
-  const { user, logout, isAuthenticated } = useAuth();
-  const [currentView, setCurrentView] = useState('landing');
-  const [currentRoom, setCurrentRoom] = useState(null);
+  const { user, logout, isAuthenticated, loading } = useAuth();
+  const [currentView, setCurrentView]   = useState('landing');
+  const [currentRoom, setCurrentRoom]   = useState(null);
   const [currentUsername, setCurrentUsername] = useState('');
-  const [currentUserId, setCurrentUserId] = useState(null);
+  const [currentUserId, setCurrentUserId]     = useState(null);
+
+  // Show loading screen while AuthContext checks saved token.
+  // This prevents the page "flicker" on refresh.
+  if (loading) {
+    return (
+      <div className="app-loading">
+        <div className="loading-spinner-large"></div>
+        <p>Loading...</p>
+      </div>
+    );
+  }
 
   const handleNavigate = (view) => {
     if ((view === 'create' || view === 'join') && !isAuthenticated) setCurrentView('login');
@@ -862,14 +945,14 @@ function App() {
     setCurrentView('landing');
     toast.success('Logged out');
   };
-  
+
   const handleJoinRoom = (roomId, username, userId = null) => {
     setCurrentRoom(roomId);
     setCurrentUsername(username);
     setCurrentUserId(userId);
     setCurrentView('editor');
   };
-  
+
   const handleLeaveRoom = () => {
     setCurrentRoom(null);
     setCurrentUsername('');

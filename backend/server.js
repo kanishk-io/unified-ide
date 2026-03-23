@@ -62,109 +62,89 @@ const io = socketIo(server, {
   pingInterval: 25000
 });
 
-// Document Class with Fixed OT
+// ===== GEMINI HELPER =====
+// Tries multiple model names in order until one works
+const GEMINI_MODELS = [
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+  'gemini-1.5-flash-latest',
+  'gemini-1.5-flash',
+  'gemini-pro'
+];
+
+async function callGeminiAPI(prompt, apiKey) {
+  let lastError = null;
+
+  for (const model of GEMINI_MODELS) {
+    try {
+      console.log(`🤖 Trying Gemini model: ${model}`);
+      const response = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        { contents: [{ parts: [{ text: prompt }] }] },
+        {
+          timeout: 30000,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+
+      if (response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+        console.log(`✅ Gemini model worked: ${model}`);
+        return response.data.candidates[0].content.parts[0].text;
+      }
+    } catch (err) {
+      lastError = err;
+      const status = err.response?.status;
+      const msg = err.response?.data?.error?.message || err.message;
+      console.log(`⚠️ Model ${model} failed (${status}): ${msg}`);
+      // If 429 (rate limit) stop retrying
+      if (status === 429) throw err;
+      // Continue to next model for 404
+    }
+  }
+
+  throw lastError || new Error('All Gemini models failed');
+}
+
+// ===== DOCUMENT CLASS (Simplified – full document sync, no OT) =====
 class Document {
   constructor(content = '', language = 'javascript') {
     this.content = content;
     this.language = language;
     this.version = 0;
-    this.pendingOperations = [];
     this.files = new Map();
     this.currentFile = 'main.js';
     this.files.set('main.js', content);
     this.clientCursors = new Map();
   }
 
-  // Fixed OT transformation - ensures correct character positions
-  transformOperation(op, appliedOp) {
-    const transformed = { ...op };
-    
-    if (op.type === 'insert') {
-      if (appliedOp.type === 'insert' && appliedOp.position <= op.position) {
-        transformed.position += appliedOp.text.length;
-      } else if (appliedOp.type === 'delete' && appliedOp.position < op.position) {
-        transformed.position -= appliedOp.length;
-      }
-    } 
-    else if (op.type === 'delete') {
-      if (appliedOp.type === 'insert' && appliedOp.position <= op.position) {
-        transformed.position += appliedOp.text.length;
-      } else if (appliedOp.type === 'delete' && appliedOp.position < op.position) {
-        transformed.position -= appliedOp.length;
-      }
-    }
-    
-    return transformed;
-  }
-
-  applyOperation(operation, clientId) {
-    try {
-      let currentOp = { ...operation };
-      
-      // Transform against all pending operations from other clients
-      for (const pendingOp of this.pendingOperations) {
-        if (pendingOp.clientId !== clientId) {
-          currentOp = this.transformOperation(currentOp, pendingOp);
-        }
-      }
-      
-      // Apply the transformed operation
-      if (currentOp.type === 'insert') {
-        this.content = this.content.slice(0, currentOp.position) + 
-                       currentOp.text + 
-                       this.content.slice(currentOp.position);
-      } else if (currentOp.type === 'delete') {
-        this.content = this.content.slice(0, currentOp.position) + 
-                       this.content.slice(currentOp.position + currentOp.length);
-      }
-      
-      // Store operation
-      currentOp.version = ++this.version;
-      currentOp.clientId = clientId;
-      currentOp.timestamp = Date.now();
-      this.pendingOperations.push(currentOp);
-      
-      // Keep only last 100 operations
-      if (this.pendingOperations.length > 100) {
-        this.pendingOperations = this.pendingOperations.slice(-100);
-      }
-      
-      // Update file content
-      this.files.set(this.currentFile, this.content);
-      
-      return { operation: currentOp, content: this.content, version: this.version };
-    } catch (error) {
-      console.error('Error applying operation:', error);
-      return null;
-    }
-  }
-
   getState() {
     return { content: this.content, language: this.language, version: this.version };
   }
 
+  // Full document sync – replaces OT approach
+  updateContent(content, fileName) {
+    this.content = content;
+    const file = fileName || this.currentFile;
+    this.files.set(file, content);
+    this.version++;
+    return this.version;
+  }
+
   updateCursor(clientId, position, username) {
     this.clientCursors.set(clientId, { position, username, lastSeen: Date.now() });
-    // Clean old cursors
     const now = Date.now();
     for (const [id, state] of this.clientCursors.entries()) {
-      if (now - state.lastSeen > 30000) {
-        this.clientCursors.delete(id);
-      }
+      if (now - state.lastSeen > 30000) this.clientCursors.delete(id);
     }
     return Array.from(this.clientCursors.entries()).map(([id, state]) => ({
-      clientId: id,
-      username: state.username,
-      position: state.position
+      clientId: id, username: state.username, position: state.position
     }));
   }
 
   removeClient(clientId) {
     this.clientCursors.delete(clientId);
     return Array.from(this.clientCursors.entries()).map(([id, state]) => ({
-      clientId: id,
-      username: state.username,
-      position: state.position
+      clientId: id, username: state.username, position: state.position
     }));
   }
 
@@ -223,7 +203,9 @@ app.get('/api/auth/me', auth, authController.getMe);
 app.post('/api/auth/logout', auth, authController.logout);
 
 app.get('/api/languages', (req, res) => {
-  const languages = Object.entries(SUPPORTED_LANGUAGES).map(([key, value]) => ({ id: key, name: value.name, extension: value.extension }));
+  const languages = Object.entries(SUPPORTED_LANGUAGES).map(([key, value]) => ({
+    id: key, name: value.name, extension: value.extension
+  }));
   res.json({ success: true, languages });
 });
 
@@ -233,7 +215,9 @@ app.post('/api/execute', async (req, res) => {
     if (!code || !language) {
       return res.status(400).json({ success: false, output: 'Code and language required' });
     }
+    console.log(`⚡ Executing ${language} code...`);
     const result = await codeExecutionService.executeCode(code, language, input || '');
+    console.log(`✅ Execution result:`, result.success ? 'SUCCESS' : 'FAILED');
     res.json(result);
   } catch (error) {
     console.error('Execution error:', error);
@@ -241,103 +225,80 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
-// AI Routes - Fixed Gemini API
+// AI Generate – Fixed with multi-model fallback
 app.post('/api/ai/generate', async (req, res) => {
   try {
     const { prompt, language, context } = req.body;
     if (!prompt) {
       return res.status(400).json({ success: false, error: 'Prompt required' });
     }
-    
-    console.log(`🤖 AI Generation: "${prompt.substring(0, 50)}..." (${language})`);
-    
+
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     if (!GEMINI_API_KEY) {
-      return res.json({ 
-        success: false, 
-        error: 'Gemini API key not configured. Please add GEMINI_API_KEY to .env file.',
-        code: '// AI Error: API key missing\n// Add GEMINI_API_KEY to your environment variables'
+      return res.json({
+        success: false,
+        error: 'Gemini API key not configured. Please add GEMINI_API_KEY to environment variables.',
+        code: '// AI Error: API key missing\n// Go to https://aistudio.google.com/app/apikey to get a free API key\n// Then add it to Render environment variables as GEMINI_API_KEY'
       });
     }
-    
+
+    console.log(`🤖 AI Generation: "${prompt.substring(0, 50)}..." (${language})`);
+
     const fullPrompt = `You are a professional programmer. Generate ONLY the code, no explanations, no markdown, no backticks.
 Language: ${language}
 Request: ${prompt}
 Return only the raw code. Make it complete and runnable.`;
 
-    // Use the correct Gemini API endpoint
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        contents: [{
-          parts: [{ text: fullPrompt }]
-        }]
-      },
-      { 
-        timeout: 30000,
-        headers: { 'Content-Type': 'application/json' }
-      }
-    );
-    
-    if (response.data && response.data.candidates && response.data.candidates[0]) {
-      let generatedCode = response.data.candidates[0].content.parts[0].text;
-      // Clean up markdown
-      generatedCode = generatedCode.replace(/```\w*\n/g, '').replace(/```/g, '').trim();
-      res.json({ success: true, code: generatedCode });
-    } else {
-      throw new Error('Invalid response from Gemini API');
-    }
-    
+    let generatedCode = await callGeminiAPI(fullPrompt, GEMINI_API_KEY);
+    // Clean up any markdown that slipped through
+    generatedCode = generatedCode.replace(/```\w*\n?/g, '').replace(/```/g, '').trim();
+    res.json({ success: true, code: generatedCode });
+
   } catch (error) {
-    console.error('AI error:', error.response?.data || error.message);
-    res.json({ 
-      success: false, 
-      error: error.response?.data?.error?.message || error.message,
-      code: `// AI Error: ${error.message}\n// Please check your GEMINI_API_KEY and try again.`
+    console.error('AI generate error:', error.response?.data || error.message);
+    const errMsg = error.response?.data?.error?.message || error.message;
+    res.json({
+      success: false,
+      error: errMsg,
+      code: `// AI Error: ${errMsg}\n// Fix: Get a new API key from https://aistudio.google.com/app/apikey\n// Then update GEMINI_API_KEY in Render environment variables`
     });
   }
 });
 
+// AI Analyze – Fixed with multi-model fallback
 app.post('/api/ai/analyze', async (req, res) => {
   try {
     const { code, language } = req.body;
     if (!code) {
       return res.status(400).json({ success: false, error: 'Code required' });
     }
-    
+
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     if (!GEMINI_API_KEY) {
-      return res.json({ success: false, analysis: 'Gemini API key not configured' });
+      return res.json({ success: false, analysis: 'Gemini API key not configured. Add GEMINI_API_KEY to environment variables.' });
     }
-    
-    const prompt = `Analyze this ${language} code. Return a structured analysis:
+
+    console.log(`🔍 Analyzing ${language} code...`);
+
+    const prompt = `Analyze this ${language} code and provide a structured review.
 Code:
-${code.substring(0, 2000)}
+${code.substring(0, 3000)}
 
-Provide:
-- Bugs: List any bugs found
-- Code Quality: Score 1-10 with explanation
-- Security: List any security concerns
-- Performance: Suggestions for improvement
-- Recommendations: Specific actionable improvements`;
+Please provide:
+**Bugs:** List any bugs found (or "None found")
+**Code Quality:** Score out of 10 with brief explanation
+**Security:** Any security concerns (or "None found")
+**Performance:** Suggestions for improvement
+**Recommendations:** Top 3 actionable improvements`;
 
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        contents: [{
-          parts: [{ text: prompt }]
-        }]
-      },
-      { timeout: 30000 }
-    );
-    
-    let analysis = response.data.candidates[0].content.parts[0].text;
+    let analysis = await callGeminiAPI(prompt, GEMINI_API_KEY);
     analysis = analysis.trim();
     res.json({ success: true, analysis });
-    
+
   } catch (error) {
-    console.error('Analysis error:', error.message);
-    res.json({ success: false, analysis: `Analysis failed: ${error.message}` });
+    console.error('Analysis error:', error.response?.data || error.message);
+    const errMsg = error.response?.data?.error?.message || error.message;
+    res.json({ success: false, analysis: `Analysis failed: ${errMsg}\n\nFix: Update your GEMINI_API_KEY in Render environment variables.\nGet a new key at: https://aistudio.google.com/app/apikey` });
   }
 });
 
@@ -346,12 +307,8 @@ app.post('/api/projects', auth, async (req, res) => {
     const { name, description, language, code, isPublic } = req.body;
     const projectId = Math.random().toString(36).substring(2, 10).toUpperCase();
     const project = new Project({
-      projectId,
-      name: name || 'Untitled',
-      description: description || '',
-      owner: req.user._id,
-      language: language || 'javascript',
-      code: code || '',
+      projectId, name: name || 'Untitled', description: description || '',
+      owner: req.user._id, language: language || 'javascript', code: code || '',
       isPublic: isPublic || false,
       versions: [{ content: code || '', language: language || 'javascript', createdBy: req.user._id }]
     });
@@ -365,7 +322,9 @@ app.post('/api/projects', auth, async (req, res) => {
 
 app.get('/api/projects', auth, async (req, res) => {
   try {
-    const projects = await Project.find({ $or: [{ owner: req.user._id }, { 'collaborators.user': req.user._id }] }).populate('owner', 'username email').sort({ updatedAt: -1 });
+    const projects = await Project.find({
+      $or: [{ owner: req.user._id }, { 'collaborators.user': req.user._id }]
+    }).populate('owner', 'username email').sort({ updatedAt: -1 });
     res.json({ success: true, projects });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to fetch projects' });
@@ -390,32 +349,46 @@ io.on('connection', (socket) => {
       socket.roomId = roomId;
       socket.username = username;
       socket.userId = userId;
-      
+
       let session = activeSessions.get(roomId);
       if (!session) {
         session = new Document('// Start coding here...', 'javascript');
         activeSessions.set(roomId, session);
       }
-      
-      // Store user in room
-      if (!socket.roomUsers) socket.roomUsers = new Map();
-      socket.roomUsers.set(roomId, { id: socket.id, username, userId });
-      
-      // Send current state
+
+      // Send current state to the joining user
       socket.emit('document-state', session.getState());
       socket.emit('files-list', session.getFiles());
-      
+
       // Get all users in room
       const roomSockets = await io.in(roomId).fetchSockets();
       const users = roomSockets.map(s => ({ id: s.id, username: s.username }));
       io.to(roomId).emit('users-update', users);
-      
+
       // Notify others
       socket.to(roomId).emit('user-joined', { id: socket.id, username });
-      
+
     } catch (error) {
       console.error('Join room error:', error);
       socket.emit('error', { message: 'Failed to join room' });
+    }
+  });
+
+  // ===== FULL DOCUMENT SYNC (replaces OT-based code-change) =====
+  // Client sends the full document content on every change (debounced).
+  // Server updates its state and broadcasts to all OTHER clients.
+  // This is simpler and 100% reliable – no OT corruption possible.
+  socket.on('code-full-sync', ({ code, roomId, fileName }) => {
+    const session = activeSessions.get(roomId);
+    if (session) {
+      const version = session.updateContent(code, fileName);
+      // Broadcast full code to all OTHER clients in the room
+      socket.to(roomId).emit('code-synced', {
+        code,
+        version,
+        username: socket.username,
+        fileName: fileName || session.currentFile
+      });
     }
   });
 
@@ -444,23 +417,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('code-change', ({ operation, roomId }) => {
-    const session = activeSessions.get(roomId);
-    if (session) {
-      const result = session.applyOperation(operation, socket.id);
-      if (result) {
-        // Broadcast to all other clients
-        socket.to(roomId).emit('code-update', {
-          operation: result.operation,
-          content: result.content,
-          version: result.version,
-          clientId: socket.id,
-          username: socket.username
-        });
-      }
-    }
-  });
-
   socket.on('language-change', ({ language, roomId }) => {
     const session = activeSessions.get(roomId);
     if (session) {
@@ -474,22 +430,18 @@ io.on('connection', (socket) => {
     if (roomId) {
       console.log(`👋 ${socket.username} left room ${roomId}`);
       socket.to(roomId).emit('user-left', { id: socket.id, username: socket.username });
-      
+
       const session = activeSessions.get(roomId);
       if (session) {
         const cursors = session.removeClient(socket.id);
         io.to(roomId).emit('cursors-update', cursors);
       }
-      
-      // Check if room is empty
+
       io.in(roomId).fetchSockets().then(sockets => {
         if (sockets.length === 0) {
           console.log(`🗑️ Room ${roomId} is empty, cleaning up`);
-          setTimeout(() => {
-            activeSessions.delete(roomId);
-          }, 300000); // Clean up after 5 minutes
+          setTimeout(() => activeSessions.delete(roomId), 300000);
         } else {
-          // Update users list
           const users = sockets.map(s => ({ id: s.id, username: s.username }));
           io.to(roomId).emit('users-update', users);
         }
@@ -506,8 +458,7 @@ server.listen(PORT, HOST, () => {
   console.log('🚀 Unified IDE Backend Server');
   console.log('='.repeat(50));
   console.log(`📍 Port: ${PORT}`);
-  console.log(`🗄️  MongoDB: Connected`);
-  console.log(`🤖 Gemini AI: ${process.env.GEMINI_API_KEY ? '✅' : '❌'}`);
-  console.log(`⚡ JDoodle: ${process.env.JDOODLE_CLIENT_ID ? '✅' : '❌'}`);
+  console.log(`🤖 Gemini AI: ${process.env.GEMINI_API_KEY ? '✅ Key present' : '❌ Key missing – add GEMINI_API_KEY'}`);
+  console.log(`⚡ JDoodle: ${process.env.JDOODLE_CLIENT_ID ? '✅' : '⚠️  Missing – will use Piston fallback'}`);
   console.log('='.repeat(50));
 });
