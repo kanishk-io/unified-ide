@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
-const axios = require('axios'); // added
+const axios = require('axios');
 require('dotenv').config();
 
 const connectDB = require('./config/database');
@@ -11,7 +11,6 @@ const Project = require('./models/Project');
 const { auth } = require('./middleware/auth');
 const authController = require('./controllers/authController');
 const codeExecutionService = require('./services/codeExecutionService');
-const { OperationalTransform, Operation } = require('./utils/ot');
 
 const app = express();
 const server = http.createServer(app);
@@ -63,35 +62,77 @@ const io = socketIo(server, {
   pingInterval: 25000
 });
 
-// Document Class with File System
+// Document Class with Fixed OT
 class Document {
   constructor(content = '', language = 'javascript') {
     this.content = content;
     this.language = language;
     this.version = 0;
-    this.operations = [];
-    this.otEngine = new OperationalTransform();
-    this.clientStates = new Map();
+    this.pendingOperations = [];
     this.files = new Map();
     this.currentFile = 'main.js';
     this.files.set('main.js', content);
+    this.clientCursors = new Map();
+  }
+
+  // Fixed OT transformation - ensures correct character positions
+  transformOperation(op, appliedOp) {
+    const transformed = { ...op };
+    
+    if (op.type === 'insert') {
+      if (appliedOp.type === 'insert' && appliedOp.position <= op.position) {
+        transformed.position += appliedOp.text.length;
+      } else if (appliedOp.type === 'delete' && appliedOp.position < op.position) {
+        transformed.position -= appliedOp.length;
+      }
+    } 
+    else if (op.type === 'delete') {
+      if (appliedOp.type === 'insert' && appliedOp.position <= op.position) {
+        transformed.position += appliedOp.text.length;
+      } else if (appliedOp.type === 'delete' && appliedOp.position < op.position) {
+        transformed.position -= appliedOp.length;
+      }
+    }
+    
+    return transformed;
   }
 
   applyOperation(operation, clientId) {
     try {
-      const transformedOp = this.otEngine.applyOperation(
-        new Operation(operation.type, operation.position, operation.text, operation.length),
-        clientId
-      );
-
-      if (transformedOp) {
-        this.content = transformedOp.applyToText(this.content);
-        this.version = this.otEngine.getCurrentVersion();
-        this.operations.push({ ...transformedOp, clientId, timestamp: new Date() });
-        this.files.set(this.currentFile, this.content);
-        return { operation: transformedOp, content: this.content, version: this.version };
+      let currentOp = { ...operation };
+      
+      // Transform against all pending operations from other clients
+      for (const pendingOp of this.pendingOperations) {
+        if (pendingOp.clientId !== clientId) {
+          currentOp = this.transformOperation(currentOp, pendingOp);
+        }
       }
-      return null;
+      
+      // Apply the transformed operation
+      if (currentOp.type === 'insert') {
+        this.content = this.content.slice(0, currentOp.position) + 
+                       currentOp.text + 
+                       this.content.slice(currentOp.position);
+      } else if (currentOp.type === 'delete') {
+        this.content = this.content.slice(0, currentOp.position) + 
+                       this.content.slice(currentOp.position + currentOp.length);
+      }
+      
+      // Store operation
+      currentOp.version = ++this.version;
+      currentOp.clientId = clientId;
+      currentOp.timestamp = Date.now();
+      this.pendingOperations.push(currentOp);
+      
+      // Keep only last 100 operations
+      if (this.pendingOperations.length > 100) {
+        this.pendingOperations = this.pendingOperations.slice(-100);
+      }
+      
+      // Update file content
+      this.files.set(this.currentFile, this.content);
+      
+      return { operation: currentOp, content: this.content, version: this.version };
     } catch (error) {
       console.error('Error applying operation:', error);
       return null;
@@ -102,30 +143,29 @@ class Document {
     return { content: this.content, language: this.language, version: this.version };
   }
 
-  getOperationsAfterVersion(version) {
-    return this.otEngine.getOperationsAfterVersion(version);
-  }
-
-  updateClientCursor(clientId, position, username) {
-    this.clientStates.set(clientId, { position, username, lastSeen: Date.now() });
+  updateCursor(clientId, position, username) {
+    this.clientCursors.set(clientId, { position, username, lastSeen: Date.now() });
+    // Clean old cursors
     const now = Date.now();
-    for (const [id, state] of this.clientStates.entries()) {
-      if (now - state.lastSeen > 300000) this.clientStates.delete(id);
+    for (const [id, state] of this.clientCursors.entries()) {
+      if (now - state.lastSeen > 30000) {
+        this.clientCursors.delete(id);
+      }
     }
-    return this.getActiveCursors();
-  }
-
-  getActiveCursors() {
-    const cursors = [];
-    for (const [clientId, state] of this.clientStates.entries()) {
-      cursors.push({ clientId, username: state.username, position: state.position, lastSeen: state.lastSeen });
-    }
-    return cursors;
+    return Array.from(this.clientCursors.entries()).map(([id, state]) => ({
+      clientId: id,
+      username: state.username,
+      position: state.position
+    }));
   }
 
   removeClient(clientId) {
-    this.clientStates.delete(clientId);
-    return this.getActiveCursors();
+    this.clientCursors.delete(clientId);
+    return Array.from(this.clientCursors.entries()).map(([id, state]) => ({
+      clientId: id,
+      username: state.username,
+      position: state.position
+    }));
   }
 
   changeLanguage(language) {
@@ -148,20 +188,12 @@ class Document {
     return { content: this.content, fileName: this.currentFile };
   }
 
-  updateFileContent(fileName, content) {
-    this.files.set(fileName, content);
-    if (this.currentFile === fileName) {
-      this.content = content;
-    }
-  }
-
   getFiles() {
     return Array.from(this.files.keys());
   }
 }
 
 const activeSessions = new Map();
-const activeRooms = new Map();
 
 const SUPPORTED_LANGUAGES = {
   'javascript': { name: 'JavaScript', extension: 'js' },
@@ -182,7 +214,7 @@ const SUPPORTED_LANGUAGES = {
 // ===== API ROUTES =====
 
 app.get('/api/status', (req, res) => {
-  res.json({ success: true, status: 'Online', timestamp: new Date(), activeRooms: activeSessions.size, activeUsers: io.engine.clientsCount });
+  res.json({ success: true, status: 'Online', timestamp: new Date(), activeRooms: activeSessions.size });
 });
 
 app.post('/api/auth/register', authController.register);
@@ -198,8 +230,10 @@ app.get('/api/languages', (req, res) => {
 app.post('/api/execute', async (req, res) => {
   try {
     const { code, language, input } = req.body;
-    if (!code || !language) return res.status(400).json({ success: false, output: 'Code and language required' });
-    const result = await codeExecutionService.executeCode(code, language, input);
+    if (!code || !language) {
+      return res.status(400).json({ success: false, output: 'Code and language required' });
+    }
+    const result = await codeExecutionService.executeCode(code, language, input || '');
     res.json(result);
   } catch (error) {
     console.error('Execution error:', error);
@@ -207,58 +241,93 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
-// AI Routes using Gemini
+// AI Routes - Fixed Gemini API
 app.post('/api/ai/generate', async (req, res) => {
   try {
     const { prompt, language, context } = req.body;
-    if (!prompt) return res.status(400).json({ success: false, error: 'Prompt required' });
+    if (!prompt) {
+      return res.status(400).json({ success: false, error: 'Prompt required' });
+    }
     
-    console.log(`🤖 AI Generation: "${prompt}" (${language})`);
+    console.log(`🤖 AI Generation: "${prompt.substring(0, 50)}..." (${language})`);
     
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     if (!GEMINI_API_KEY) {
-      return res.json({ success: false, error: 'Gemini API key not configured', code: '// AI Error: API key missing' });
+      return res.json({ 
+        success: false, 
+        error: 'Gemini API key not configured. Please add GEMINI_API_KEY to .env file.',
+        code: '// AI Error: API key missing\n// Add GEMINI_API_KEY to your environment variables'
+      });
     }
     
-    const fullPrompt = `You are a professional programmer. Generate ONLY the code, no explanations.
+    const fullPrompt = `You are a professional programmer. Generate ONLY the code, no explanations, no markdown, no backticks.
 Language: ${language}
-User Request: ${prompt}
-Rules: Return ONLY the code, no markdown, no backticks, no explanations. Make it complete and runnable.`;
+Request: ${prompt}
+Return only the raw code. Make it complete and runnable.`;
 
+    // Use the correct Gemini API endpoint
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
-      { contents: [{ parts: [{ text: fullPrompt }] }] },
-      { timeout: 30000 }
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        contents: [{
+          parts: [{ text: fullPrompt }]
+        }]
+      },
+      { 
+        timeout: 30000,
+        headers: { 'Content-Type': 'application/json' }
+      }
     );
     
-    let generatedCode = response.data.candidates[0].content.parts[0].text;
-    generatedCode = generatedCode.replace(/```\w*\n/g, '').replace(/```/g, '').trim();
-    res.json({ success: true, code: generatedCode });
+    if (response.data && response.data.candidates && response.data.candidates[0]) {
+      let generatedCode = response.data.candidates[0].content.parts[0].text;
+      // Clean up markdown
+      generatedCode = generatedCode.replace(/```\w*\n/g, '').replace(/```/g, '').trim();
+      res.json({ success: true, code: generatedCode });
+    } else {
+      throw new Error('Invalid response from Gemini API');
+    }
     
   } catch (error) {
-    console.error('AI error:', error.message);
-    res.json({ success: false, error: error.message, code: `// AI Error: ${error.message}` });
+    console.error('AI error:', error.response?.data || error.message);
+    res.json({ 
+      success: false, 
+      error: error.response?.data?.error?.message || error.message,
+      code: `// AI Error: ${error.message}\n// Please check your GEMINI_API_KEY and try again.`
+    });
   }
 });
 
 app.post('/api/ai/analyze', async (req, res) => {
   try {
     const { code, language } = req.body;
-    if (!code) return res.status(400).json({ success: false, error: 'Code required' });
+    if (!code) {
+      return res.status(400).json({ success: false, error: 'Code required' });
+    }
     
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     if (!GEMINI_API_KEY) {
       return res.json({ success: false, analysis: 'Gemini API key not configured' });
     }
     
-    const prompt = `Analyze this ${language} code and provide a detailed review. Be specific and critical.
+    const prompt = `Analyze this ${language} code. Return a structured analysis:
 Code:
-${code}
-Provide: Bugs found, code quality (1-10), security concerns, performance suggestions, specific improvements.`;
+${code.substring(0, 2000)}
+
+Provide:
+- Bugs: List any bugs found
+- Code Quality: Score 1-10 with explanation
+- Security: List any security concerns
+- Performance: Suggestions for improvement
+- Recommendations: Specific actionable improvements`;
 
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`,
-      { contents: [{ parts: [{ text: prompt }] }] },
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        contents: [{
+          parts: [{ text: prompt }]
+        }]
+      },
       { timeout: 30000 }
     );
     
@@ -276,7 +345,16 @@ app.post('/api/projects', auth, async (req, res) => {
   try {
     const { name, description, language, code, isPublic } = req.body;
     const projectId = Math.random().toString(36).substring(2, 10).toUpperCase();
-    const project = new Project({ projectId, name: name || 'Untitled', description: description || '', owner: req.user._id, language: language || 'javascript', code: code || '', isPublic: isPublic || false, versions: [{ content: code || '', language: language || 'javascript', createdBy: req.user._id }] });
+    const project = new Project({
+      projectId,
+      name: name || 'Untitled',
+      description: description || '',
+      owner: req.user._id,
+      language: language || 'javascript',
+      code: code || '',
+      isPublic: isPublic || false,
+      versions: [{ content: code || '', language: language || 'javascript', createdBy: req.user._id }]
+    });
     await project.save();
     res.status(201).json({ success: true, message: 'Project saved', project: { id: project._id, projectId: project.projectId, name: project.name } });
   } catch (error) {
@@ -302,7 +380,10 @@ io.on('connection', (socket) => {
   socket.on('join-room', async (roomData) => {
     try {
       const { roomId, username, userId } = roomData;
-      if (!roomId || !username) { socket.emit('error', { message: 'Room ID and username required' }); return; }
+      if (!roomId || !username) {
+        socket.emit('error', { message: 'Room ID and username required' });
+        return;
+      }
 
       console.log(`👤 ${username} joining room ${roomId}`);
       socket.join(roomId);
@@ -312,23 +393,24 @@ io.on('connection', (socket) => {
       
       let session = activeSessions.get(roomId);
       if (!session) {
-        // Remove the extra console.log; keep it simple
         session = new Document('// Start coding here...', 'javascript');
         activeSessions.set(roomId, session);
       }
       
-      if (!activeRooms.has(roomId)) activeRooms.set(roomId, new Map());
-      const roomUsers = activeRooms.get(roomId);
-      roomUsers.set(socket.id, { id: socket.id, username, userId, joinedAt: new Date() });
+      // Store user in room
+      if (!socket.roomUsers) socket.roomUsers = new Map();
+      socket.roomUsers.set(roomId, { id: socket.id, username, userId });
       
+      // Send current state
       socket.emit('document-state', session.getState());
       socket.emit('files-list', session.getFiles());
       
-      const users = Array.from(roomUsers.values());
+      // Get all users in room
+      const roomSockets = await io.in(roomId).fetchSockets();
+      const users = roomSockets.map(s => ({ id: s.id, username: s.username }));
       io.to(roomId).emit('users-update', users);
       
-      const cursors = session.updateClientCursor(socket.id, 0, username);
-      io.to(roomId).emit('cursors-update', cursors);
+      // Notify others
       socket.to(roomId).emit('user-joined', { id: socket.id, username });
       
     } catch (error) {
@@ -354,64 +436,64 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('cursor-update', (position, roomId) => {
+  socket.on('cursor-update', ({ position, roomId }) => {
     const session = activeSessions.get(roomId);
     if (session) {
-      const cursors = session.updateClientCursor(socket.id, position, socket.username);
+      const cursors = session.updateCursor(socket.id, position, socket.username);
       socket.to(roomId).emit('cursors-update', cursors);
     }
   });
 
-  socket.on('code-change', (operation, roomId) => {
+  socket.on('code-change', ({ operation, roomId }) => {
     const session = activeSessions.get(roomId);
     if (session) {
       const result = session.applyOperation(operation, socket.id);
       if (result) {
-        session.updateFileContent(session.currentFile, result.content);
-        socket.to(roomId).emit('code-update', { operation: result.operation, content: result.content, version: result.version, clientId: socket.id, username: socket.username });
+        // Broadcast to all other clients
+        socket.to(roomId).emit('code-update', {
+          operation: result.operation,
+          content: result.content,
+          version: result.version,
+          clientId: socket.id,
+          username: socket.username
+        });
       }
     }
   });
 
-  socket.on('sync-request', (version, roomId) => {
-    const session = activeSessions.get(roomId);
-    if (session) {
-      const operations = session.getOperationsAfterVersion(version);
-      socket.emit('sync-response', operations, session.getState());
-    }
-  });
-
-  socket.on('language-change', (language, roomId) => {
+  socket.on('language-change', ({ language, roomId }) => {
     const session = activeSessions.get(roomId);
     if (session) {
       session.changeLanguage(language);
-      socket.to(roomId).emit('language-update', language);
+      io.to(roomId).emit('language-update', language);
     }
   });
 
   socket.on('disconnect', () => {
     const roomId = socket.roomId;
     if (roomId) {
-      const roomUsers = activeRooms.get(roomId);
-      if (roomUsers) {
-        roomUsers.delete(socket.id);
-        const users = Array.from(roomUsers.values());
-        io.to(roomId).emit('users-update', users);
-        socket.to(roomId).emit('user-left', { id: socket.id, username: socket.username });
-        if (users.length === 0) {
-          setTimeout(() => {
-            if (activeRooms.get(roomId)?.size === 0) {
-              activeRooms.delete(roomId);
-              activeSessions.delete(roomId);
-            }
-          }, 300000);
-        }
-      }
+      console.log(`👋 ${socket.username} left room ${roomId}`);
+      socket.to(roomId).emit('user-left', { id: socket.id, username: socket.username });
+      
       const session = activeSessions.get(roomId);
       if (session) {
         const cursors = session.removeClient(socket.id);
         io.to(roomId).emit('cursors-update', cursors);
       }
+      
+      // Check if room is empty
+      io.in(roomId).fetchSockets().then(sockets => {
+        if (sockets.length === 0) {
+          console.log(`🗑️ Room ${roomId} is empty, cleaning up`);
+          setTimeout(() => {
+            activeSessions.delete(roomId);
+          }, 300000); // Clean up after 5 minutes
+        } else {
+          // Update users list
+          const users = sockets.map(s => ({ id: s.id, username: s.username }));
+          io.to(roomId).emit('users-update', users);
+        }
+      });
     }
   });
 });

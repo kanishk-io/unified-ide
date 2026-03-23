@@ -3,85 +3,77 @@ const axios = require('axios');
 class GeminiService {
   constructor() {
     this.apiKey = process.env.GEMINI_API_KEY;
-    this.apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
+    this.apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
   }
 
   async generateCode(prompt, language, context = '') {
     try {
-      const fullPrompt = `You are a professional programmer. Generate ONLY the code, no explanations.
+      if (!this.apiKey) {
+        return { success: false, error: 'Gemini API key not configured', code: '// Add GEMINI_API_KEY to .env' };
+      }
+
+      const fullPrompt = `You are a professional programmer. Generate ONLY the code, no explanations, no markdown, no backticks.
 Language: ${language}
-Context/Existing Code: ${context || 'None'}
-User Request: ${prompt}
-
-Rules:
-1. Return ONLY the code, no markdown, no backticks, no explanations
-2. Make it complete and runnable
-3. Include proper error handling
-4. For user input, use standard input methods (scanf for C, input() for Python, readline for Node.js)
-5. Add comments for clarity
-
-Code:`;
+Context: ${context || 'None'}
+Request: ${prompt}
+Return only raw code. Make it complete and runnable.`;
 
       const response = await axios.post(
         `${this.apiUrl}?key=${this.apiKey}`,
         {
-          contents: [{
-            parts: [{ text: fullPrompt }]
-          }]
+          contents: [{ parts: [{ text: fullPrompt }] }]
         },
         { timeout: 30000 }
       );
 
-      let generatedCode = response.data.candidates[0].content.parts[0].text;
-      generatedCode = generatedCode.replace(/```\w*\n/g, '').replace(/```/g, '').trim();
+      if (response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+        let generatedCode = response.data.candidates[0].content.parts[0].text;
+        generatedCode = generatedCode.replace(/```\w*\n/g, '').replace(/```/g, '').trim();
+        return { success: true, code: generatedCode };
+      }
       
-      return { success: true, code: generatedCode };
+      throw new Error('Invalid response from Gemini API');
     } catch (error) {
-      console.error('Gemini API error:', error.message);
-      return { 
-        success: false, 
-        error: 'AI service unavailable. Please check your API key.',
-        code: `// AI Error: ${error.message}\n\n// Please check your GEMINI_API_KEY in environment variables`
+      console.error('Gemini API error:', error.response?.data || error.message);
+      return {
+        success: false,
+        error: error.response?.data?.error?.message || error.message,
+        code: `// AI Error: ${error.message}`
       };
     }
   }
 
   async analyzeCode(code, language) {
     try {
-      const prompt = `Analyze this ${language} code and provide a detailed review.
+      if (!this.apiKey) {
+        return { success: false, analysis: 'Gemini API key not configured' };
+      }
+
+      const prompt = `Analyze this ${language} code. Return structured analysis:
 Code:
-${code}
+${code.substring(0, 2000)}
 
-Provide analysis in this exact format:
-- Bugs and issues found (if any)
-- Code quality (1-10)
-- Security concerns (if any)
-- Performance suggestions
-- Best practices violations
-- Specific improvements with code examples
-
-Be specific and critical. If the code is good, say so. If there are issues, point them out clearly.`;
+Provide:
+- Bugs: List any bugs found
+- Code Quality: Score 1-10 with explanation
+- Security: List any security concerns
+- Performance: Suggestions for improvement
+- Recommendations: Specific actionable improvements`;
 
       const response = await axios.post(
         `${this.apiUrl}?key=${this.apiKey}`,
         {
-          contents: [{
-            parts: [{ text: prompt }]
-          }]
+          contents: [{ parts: [{ text: prompt }] }]
         },
         { timeout: 30000 }
       );
 
       let analysis = response.data.candidates[0].content.parts[0].text;
       analysis = analysis.trim();
-      
       return { success: true, analysis };
     } catch (error) {
       console.error('Analysis error:', error.message);
-      return { 
-        success: false, 
-        analysis: `Analysis failed: ${error.message}\n\nPlease check your API key.` 
-      };
+      return { success: false, analysis: `Analysis failed: ${error.message}` };
     }
   }
 }
