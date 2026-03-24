@@ -537,7 +537,6 @@ function TerminalComponent({ output, onInput, onClear, isRunning }) {
 
 // ===== EDITOR PAGE =====
 function EditorPage({ roomId, username, userId, onLeaveRoom }) {
-  // Map to store content for each file independently
   const [fileContents, setFileContents] = useState(() => ({ 'main.js': '// Start coding here...' }));
   const [currentFile, setCurrentFile] = useState('main.js');
   const [code, setCode] = useState('// Start coding here...');
@@ -558,14 +557,12 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
   const isRemoteUpdateRef = useRef(false);
   const syncTimerRef = useRef(null);
 
-  // When currentFile changes, update editor code from fileContents
   useEffect(() => {
     if (!isRemoteUpdateRef.current) {
       setCode(fileContents[currentFile] || '');
     }
   }, [currentFile, fileContents]);
 
-  // Update fileContents when code changes locally
   const updateCode = (newCode, isRemote = false) => {
     if (isRemote) isRemoteUpdateRef.current = true;
     setCode(newCode);
@@ -573,7 +570,6 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
     if (isRemote) setTimeout(() => { isRemoteUpdateRef.current = false; }, 100);
   };
 
-  // Debounced sync to server
   const syncToServer = (value) => {
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => {
@@ -622,9 +618,10 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
     if (!code.trim()) { toast.error('No code to run'); return; }
     setIsRunning(true);
     setTerminalOutput('⏳ Running code...\n');
+    const inputToSend = pendingInput;
     setPendingInput('');
     try {
-      const response = await axios.post(`${API_URL}/execute`, { code, language, input: pendingInput });
+      const response = await axios.post(`${API_URL}/execute`, { code, language, input: inputToSend });
       if (response.data.success) {
         setTerminalOutput(response.data.output || '✓ Executed successfully (no output)');
         toast.success('Execution complete');
@@ -700,7 +697,6 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
   };
   const leaveRoom = () => { socket.disconnect(); onLeaveRoom(); };
 
-  // Socket event handlers
   useEffect(() => {
     socketRef.current = socket;
     socket.emit('join-room', { roomId, username, userId });
