@@ -63,12 +63,14 @@ const io = socketIo(server, {
 });
 
 // ===== GEMINI HELPER =====
-// Tries multiple model names in order until one works
+// NOTE: gemini-1.5-flash is tried FIRST as it has the most reliable free-tier quota.
+// gemini-2.0-flash often has limit:0 on new free keys.
 const GEMINI_MODELS = [
-  'gemini-2.0-flash',
-  'gemini-2.0-flash-lite',
-  'gemini-1.5-flash-latest',
   'gemini-1.5-flash',
+  'gemini-1.5-flash-latest',
+  'gemini-1.5-pro',
+  'gemini-2.0-flash-lite',
+  'gemini-2.0-flash',
   'gemini-pro'
 ];
 
@@ -95,17 +97,18 @@ async function callGeminiAPI(prompt, apiKey) {
       lastError = err;
       const status = err.response?.status;
       const msg = err.response?.data?.error?.message || err.message;
-      console.log(`⚠️ Model ${model} failed (${status}): ${msg}`);
-      // If 429 (rate limit) stop retrying
-      if (status === 429) throw err;
-      // Continue to next model for 404
+      console.log(`⚠️ Model ${model} failed (${status}): ${msg?.substring(0, 100)}`);
+      // On 429 (quota), skip to next model instead of throwing
+      // On 400/404, also skip to next model
+      // Only throw on unexpected errors
+      if (status && ![400, 404, 429].includes(status)) throw err;
     }
   }
 
-  throw lastError || new Error('All Gemini models failed');
+  throw lastError || new Error('All Gemini models exhausted. Please get a fresh API key from https://aistudio.google.com/app/apikey');
 }
 
-// ===== DOCUMENT CLASS (Simplified – full document sync, no OT) =====
+// ===== DOCUMENT CLASS =====
 class Document {
   constructor(content = '', language = 'javascript') {
     this.content = content;
@@ -121,7 +124,6 @@ class Document {
     return { content: this.content, language: this.language, version: this.version };
   }
 
-  // Full document sync – replaces OT approach
   updateContent(content, fileName) {
     this.content = content;
     const file = fileName || this.currentFile;
@@ -158,6 +160,24 @@ class Document {
       this.files.set(fileName, content);
     }
     return Array.from(this.files.keys());
+  }
+
+  // NEW: Delete a file (cannot delete if it's the only file)
+  deleteFile(fileName) {
+    if (this.files.size <= 1) {
+      return { success: false, error: 'Cannot delete the only file', files: Array.from(this.files.keys()) };
+    }
+    if (!this.files.has(fileName)) {
+      return { success: false, error: 'File not found', files: Array.from(this.files.keys()) };
+    }
+    this.files.delete(fileName);
+    const remaining = Array.from(this.files.keys());
+    // If deleted file was current, switch to first available
+    if (this.currentFile === fileName) {
+      this.currentFile = remaining[0];
+      this.content = this.files.get(this.currentFile);
+    }
+    return { success: true, files: remaining, newCurrentFile: this.currentFile };
   }
 
   switchFile(fileName) {
@@ -215,7 +235,7 @@ app.post('/api/execute', async (req, res) => {
     if (!code || !language) {
       return res.status(400).json({ success: false, output: 'Code and language required' });
     }
-    console.log(`⚡ Executing ${language} code...`);
+    console.log(`⚡ Executing ${language} code (stdin: ${input ? input.length + ' chars' : 'none'})...`);
     const result = await codeExecutionService.executeCode(code, language, input || '');
     console.log(`✅ Execution result:`, result.success ? 'SUCCESS' : 'FAILED');
     res.json(result);
@@ -225,7 +245,7 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
-// AI Generate – Fixed with multi-model fallback
+// AI Generate – tries gemini-1.5-flash first (more stable free quota)
 app.post('/api/ai/generate', async (req, res) => {
   try {
     const { prompt, language, context } = req.body;
@@ -237,7 +257,7 @@ app.post('/api/ai/generate', async (req, res) => {
     if (!GEMINI_API_KEY) {
       return res.json({
         success: false,
-        error: 'Gemini API key not configured. Please add GEMINI_API_KEY to environment variables.',
+        error: 'Gemini API key not configured.',
         code: '// AI Error: API key missing\n// Go to https://aistudio.google.com/app/apikey to get a free API key\n// Then add it to Render environment variables as GEMINI_API_KEY'
       });
     }
@@ -250,7 +270,6 @@ Request: ${prompt}
 Return only the raw code. Make it complete and runnable.`;
 
     let generatedCode = await callGeminiAPI(fullPrompt, GEMINI_API_KEY);
-    // Clean up any markdown that slipped through
     generatedCode = generatedCode.replace(/```\w*\n?/g, '').replace(/```/g, '').trim();
     res.json({ success: true, code: generatedCode });
 
@@ -260,12 +279,12 @@ Return only the raw code. Make it complete and runnable.`;
     res.json({
       success: false,
       error: errMsg,
-      code: `// AI Error: ${errMsg}\n// Fix: Get a new API key from https://aistudio.google.com/app/apikey\n// Then update GEMINI_API_KEY in Render environment variables`
+      code: `// AI Error: ${errMsg}\n// Fix: Get a fresh API key from https://aistudio.google.com/app/apikey\n// Then update GEMINI_API_KEY in Render environment variables`
     });
   }
 });
 
-// AI Analyze – Fixed with multi-model fallback
+// AI Analyze
 app.post('/api/ai/analyze', async (req, res) => {
   try {
     const { code, language } = req.body;
@@ -275,7 +294,7 @@ app.post('/api/ai/analyze', async (req, res) => {
 
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     if (!GEMINI_API_KEY) {
-      return res.json({ success: false, analysis: 'Gemini API key not configured. Add GEMINI_API_KEY to environment variables.' });
+      return res.json({ success: false, analysis: 'Gemini API key not configured.' });
     }
 
     console.log(`🔍 Analyzing ${language} code...`);
@@ -298,7 +317,7 @@ Please provide:
   } catch (error) {
     console.error('Analysis error:', error.response?.data || error.message);
     const errMsg = error.response?.data?.error?.message || error.message;
-    res.json({ success: false, analysis: `Analysis failed: ${errMsg}\n\nFix: Update your GEMINI_API_KEY in Render environment variables.\nGet a new key at: https://aistudio.google.com/app/apikey` });
+    res.json({ success: false, analysis: `Analysis failed: ${errMsg}\n\nFix: Update your GEMINI_API_KEY in Render environment variables.\nGet a fresh key at: https://aistudio.google.com/app/apikey` });
   }
 });
 
@@ -356,16 +375,12 @@ io.on('connection', (socket) => {
         activeSessions.set(roomId, session);
       }
 
-      // Send current state to the joining user
       socket.emit('document-state', session.getState());
       socket.emit('files-list', session.getFiles());
 
-      // Get all users in room
       const roomSockets = await io.in(roomId).fetchSockets();
       const users = roomSockets.map(s => ({ id: s.id, username: s.username }));
       io.to(roomId).emit('users-update', users);
-
-      // Notify others
       socket.to(roomId).emit('user-joined', { id: socket.id, username });
 
     } catch (error) {
@@ -374,15 +389,11 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ===== FULL DOCUMENT SYNC (replaces OT-based code-change) =====
-  // Client sends the full document content on every change (debounced).
-  // Server updates its state and broadcasts to all OTHER clients.
-  // This is simpler and 100% reliable – no OT corruption possible.
+  // Full document sync – client sends full content on each change (debounced)
   socket.on('code-full-sync', ({ code, roomId, fileName }) => {
     const session = activeSessions.get(roomId);
     if (session) {
       const version = session.updateContent(code, fileName);
-      // Broadcast full code to all OTHER clients in the room
       socket.to(roomId).emit('code-synced', {
         code,
         version,
@@ -397,6 +408,23 @@ io.on('connection', (socket) => {
     if (session) {
       const files = session.createFile(fileName);
       io.to(roomId).emit('files-list', files);
+    }
+  });
+
+  // NEW: Delete a file – broadcast new file list and possibly force switch
+  socket.on('file-delete', ({ roomId, fileName }) => {
+    const session = activeSessions.get(roomId);
+    if (session) {
+      const result = session.deleteFile(fileName);
+      if (result.success) {
+        // Broadcast updated file list to everyone
+        io.to(roomId).emit('files-list', result.files);
+        // Tell everyone to switch if the deleted file was current
+        io.to(roomId).emit('file-deleted', { deletedFile: fileName, newCurrentFile: result.newCurrentFile });
+        console.log(`🗑️ File "${fileName}" deleted from room ${roomId}`);
+      } else {
+        socket.emit('error', { message: result.error });
+      }
     }
   });
 
@@ -458,7 +486,7 @@ server.listen(PORT, HOST, () => {
   console.log('🚀 Unified IDE Backend Server');
   console.log('='.repeat(50));
   console.log(`📍 Port: ${PORT}`);
-  console.log(`🤖 Gemini AI: ${process.env.GEMINI_API_KEY ? '✅ Key present' : '❌ Key missing – add GEMINI_API_KEY'}`);
+  console.log(`🤖 Gemini AI: ${process.env.GEMINI_API_KEY ? '✅ Key present (using gemini-1.5-flash first)' : '❌ Key missing – add GEMINI_API_KEY'}`);
   console.log(`⚡ JDoodle: ${process.env.JDOODLE_CLIENT_ID ? '✅' : '⚠️  Missing – will use Piston fallback'}`);
   console.log('='.repeat(50));
 });

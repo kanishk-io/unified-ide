@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import io from 'socket.io-client';
 import Editor from '@monaco-editor/react';
 import { toast, ToastContainer } from 'react-toastify';
@@ -8,7 +8,7 @@ import {
   Users, Code2, Bot, Play, Share2, X, ArrowLeft, ChevronDown,
   Terminal, Copy, Download, LogOut, LogIn, UserPlus,
   AlertTriangle, CheckCircle, ChevronRight,
-  FolderPlus, User, Plus, FileCode, PanelLeftClose, PanelLeft
+  FolderPlus, User, Plus, FileCode, PanelLeftClose, PanelLeft, Trash2
 } from 'lucide-react';
 import './App.css';
 import { useAuth } from './AuthContext';
@@ -67,6 +67,11 @@ function getLanguageFromFileName(fileName) {
 function LandingPage({ onNavigate, user, onLogout }) {
   return (
     <div className="auth-container">
+      <div className="aurora-bg">
+        <div className="aurora a1"></div>
+        <div className="aurora a2"></div>
+        <div className="aurora a3"></div>
+      </div>
       <div className="auth-card">
         <div className="auth-header">
           <div className="logo-container">
@@ -157,6 +162,11 @@ function RegisterPage({ onBack, onLoginSuccess }) {
 
   return (
     <div className="auth-container">
+      <div className="aurora-bg">
+        <div className="aurora a1"></div>
+        <div className="aurora a2"></div>
+        <div className="aurora a3"></div>
+      </div>
       <div className="auth-card">
         <div className="auth-header">
           <button onClick={onBack} className="back-btn"><ArrowLeft size={16} /> Back</button>
@@ -214,6 +224,11 @@ function LoginPage({ onBack, onRegister, onLoginSuccess }) {
 
   return (
     <div className="auth-container">
+      <div className="aurora-bg">
+        <div className="aurora a1"></div>
+        <div className="aurora a2"></div>
+        <div className="aurora a3"></div>
+      </div>
       <div className="auth-card">
         <div className="auth-header">
           <button onClick={onBack} className="back-btn"><ArrowLeft size={16} /> Back</button>
@@ -263,6 +278,11 @@ function CreateRoomPage({ onBack, onJoinRoom, user }) {
 
   return (
     <div className="auth-container">
+      <div className="aurora-bg">
+        <div className="aurora a1"></div>
+        <div className="aurora a2"></div>
+        <div className="aurora a3"></div>
+      </div>
       <div className="auth-card">
         <div className="auth-header">
           <button onClick={onBack} className="back-btn"><ArrowLeft size={16} /> Back</button>
@@ -305,6 +325,11 @@ function JoinRoomPage({ onBack, onJoinRoom, user }) {
 
   return (
     <div className="auth-container">
+      <div className="aurora-bg">
+        <div className="aurora a1"></div>
+        <div className="aurora a2"></div>
+        <div className="aurora a3"></div>
+      </div>
       <div className="auth-card">
         <div className="auth-header">
           <button onClick={onBack} className="back-btn"><ArrowLeft size={16} /> Back</button>
@@ -366,10 +391,12 @@ function LanguageSelector({ currentLanguage, onLanguageChange }) {
   );
 }
 
-function FileSystemSection({ roomId, currentFile, onFileSelect, socket: socketProp, files: propFiles }) {
+// FILE SYSTEM – with delete button
+function FileSystemSection({ roomId, currentFile, onFileSelect, onFileDelete, socket: socketProp, files: propFiles }) {
   const [files, setFiles] = useState(['main.js']);
   const [isExpanded, setIsExpanded] = useState(true);
   const [newFileName, setNewFileName] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(null); // file name to confirm delete
 
   useEffect(() => {
     if (propFiles && propFiles.length > 0) setFiles(propFiles);
@@ -377,52 +404,85 @@ function FileSystemSection({ roomId, currentFile, onFileSelect, socket: socketPr
 
   useEffect(() => {
     if (!socketProp) return;
-    socketProp.on('files-list', (fileList) => setFiles(fileList));
-    return () => { socketProp.off('files-list'); };
+    const handleFilesList = (fileList) => setFiles(fileList);
+    socketProp.on('files-list', handleFilesList);
+    return () => { socketProp.off('files-list', handleFilesList); };
   }, [socketProp]);
 
   const handleCreateFile = () => {
     if (!newFileName.trim()) return;
     const newFile = newFileName.trim();
+    if (files.includes(newFile)) {
+      toast.error('A file with that name already exists');
+      return;
+    }
     if (socketProp) socketProp.emit('file-create', { roomId, fileName: newFile });
     setNewFileName('');
     onFileSelect(newFile);
     toast.success(`Created ${newFile}`);
   };
 
+  const handleDeleteFile = (fileName) => {
+    if (files.length <= 1) {
+      toast.error('Cannot delete the only file');
+      return;
+    }
+    if (socketProp) socketProp.emit('file-delete', { roomId, fileName });
+    setConfirmDelete(null);
+    onFileDelete(fileName, files.filter(f => f !== fileName)[0]);
+  };
+
   return (
     <div className="sidebar-section">
       <div className="section-header" onClick={() => setIsExpanded(!isExpanded)}>
-        <FolderPlus className="section-icon" />
-        <h3>Files ({files.length})</h3>
+        <FolderPlus className="section-icon" size={14} />
+        <h3>Files <span className="badge">{files.length}</span></h3>
         <ChevronRight className={`section-toggle ${isExpanded ? 'rotated' : ''}`} size={14} />
       </div>
       {isExpanded && (
         <div className="section-content">
-          <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
+          {/* Tip about file extensions and language detection */}
+          <div className="lang-tip">
+            💡 File extension sets the language: <code>.py</code> → Python, <code>.js</code> → JS, <code>.c</code> → C
+          </div>
+          <div className="file-create-row">
             <input
               type="text"
-              placeholder="new-file.js"
+              placeholder="new-file.py"
               value={newFileName}
               onChange={(e) => setNewFileName(e.target.value)}
-              className="auth-input"
-              style={{ padding: '6px 10px', fontSize: '11px' }}
+              className="auth-input file-name-input"
               onKeyPress={(e) => e.key === 'Enter' && handleCreateFile()}
             />
-            <button onClick={handleCreateFile} className="btn btn-sm btn-success" style={{ padding: '6px 10px' }}>
-              <Plus size={12} />
+            <button onClick={handleCreateFile} className="btn btn-sm btn-success icon-btn">
+              <Plus size={13} />
             </button>
           </div>
           <div className="file-list">
             {files.map(file => (
-              <div
-                key={file}
-                className={`file-item ${currentFile === file ? 'active' : ''}`}
-                onClick={() => onFileSelect(file)}
-              >
-                <FileCode size={12} />
-                <span>{file}</span>
-                {currentFile === file && <CheckCircle size={10} color="#00d4aa" />}
+              <div key={file} className={`file-item ${currentFile === file ? 'active' : ''}`}>
+                <div className="file-item-main" onClick={() => onFileSelect(file)}>
+                  <FileCode size={12} />
+                  <span className="file-name">{file}</span>
+                  {currentFile === file && <CheckCircle size={10} className="file-active-icon" />}
+                </div>
+                {files.length > 1 && (
+                  confirmDelete === file ? (
+                    <div className="delete-confirm">
+                      <span>Delete?</span>
+                      <button className="btn-icon danger" onClick={() => handleDeleteFile(file)} title="Yes, delete">✓</button>
+                      <button className="btn-icon" onClick={() => setConfirmDelete(null)} title="Cancel">✗</button>
+                    </div>
+                  ) : (
+                    <button
+                      className="file-delete-btn"
+                      onClick={(e) => { e.stopPropagation(); setConfirmDelete(file); }}
+                      title={`Delete ${file}`}
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  )
+                )}
               </div>
             ))}
           </div>
@@ -437,14 +497,14 @@ function AISection({ aiPrompt, setAiPrompt, aiResponse, onRequestAI, language, i
   return (
     <div className="sidebar-section">
       <div className="section-header" onClick={() => setIsExpanded(!isExpanded)}>
-        <Bot className="section-icon" />
+        <Bot className="section-icon" size={14} />
         <h3>AI Assistant</h3>
         <ChevronRight className={`section-toggle ${isExpanded ? 'rotated' : ''}`} size={14} />
       </div>
       {isExpanded && (
         <div className="section-content">
           <textarea
-            placeholder="Describe what code you want..."
+            placeholder="Describe what code you want to generate..."
             value={aiPrompt}
             onChange={(e) => setAiPrompt(e.target.value)}
             className="ai-textarea"
@@ -456,12 +516,16 @@ function AISection({ aiPrompt, setAiPrompt, aiResponse, onRequestAI, language, i
             className="btn btn-primary btn-full mb-4"
             disabled={!aiPrompt.trim() || isAnalyzing}
           >
-            {isAnalyzing ? 'Generating...' : 'Generate Code'}
+            {isAnalyzing ? (
+              <><div className="loading-dot-spinner"></div> Generating...</>
+            ) : (
+              <><Bot size={13} /> Generate Code</>
+            )}
           </button>
           {aiResponse && (
             <div className="ai-response">
               <div className="response-header">
-                <h4>Generated Code</h4>
+                <h4>Result</h4>
                 <button onClick={() => navigator.clipboard.writeText(aiResponse)} className="btn btn-sm btn-secondary">
                   <Copy size={12} /> Copy
                 </button>
@@ -475,61 +539,45 @@ function AISection({ aiPrompt, setAiPrompt, aiResponse, onRequestAI, language, i
   );
 }
 
-function TerminalComponent({ output, onInput, onClear, isRunning }) {
-  const [inputValue, setInputValue] = useState('');
+// TERMINAL – with proper stdin textarea (filled BEFORE running)
+function TerminalComponent({ output, onClear, isRunning, stdin, onStdinChange }) {
   const terminalRef = useRef(null);
 
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
   }, [output]);
 
-  const handleSendInput = () => {
-    if (inputValue.trim()) {
-      onInput(inputValue);
-      setInputValue('');
-    }
-  };
-
   return (
-    <div className="sidebar-section">
+    <div className="sidebar-section terminal-section">
       <div className="section-header" style={{ justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Terminal className="section-icon" />
+          <Terminal className="section-icon" size={14} />
           <h3>Terminal</h3>
+          {isRunning && <span className="running-pill">● Running</span>}
         </div>
         <button onClick={onClear} className="btn btn-sm btn-secondary">Clear</button>
       </div>
       <div className="section-content">
+        {/* Program Input – always visible, fill BEFORE clicking Run */}
+        <div className="stdin-section">
+          <label className="stdin-label">
+            Program Input <span className="stdin-hint">(fill before clicking Run)</span>
+          </label>
+          <textarea
+            value={stdin}
+            onChange={(e) => onStdinChange(e.target.value)}
+            placeholder={"Enter each input on a new line\nExample:\n5\n10"}
+            className="stdin-textarea"
+            rows="3"
+            disabled={isRunning}
+          />
+        </div>
+        {/* Output */}
         <div className="terminal-output" ref={terminalRef}>
           <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            {output || '$ Ready'}
+            {output || '$ Ready — fill input above then click Run'}
           </pre>
         </div>
-        <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-          <input
-            type="text"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSendInput()}
-            placeholder={isRunning ? 'Enter program input...' : 'Run code to enable input'}
-            className="auth-input"
-            style={{ flex: 1, fontSize: '12px', padding: '6px 10px' }}
-            disabled={!isRunning}
-          />
-          <button
-            onClick={handleSendInput}
-            className="btn btn-sm btn-primary"
-            disabled={!isRunning || !inputValue.trim()}
-          >
-            Send
-          </button>
-        </div>
-        {isRunning && (
-          <div className="running-indicator">
-            <div className="loading-spinner"></div>
-            <span>Program running...</span>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -537,7 +585,7 @@ function TerminalComponent({ output, onInput, onClear, isRunning }) {
 
 // ===== EDITOR PAGE =====
 function EditorPage({ roomId, username, userId, onLeaveRoom }) {
-  const [fileContents, setFileContents] = useState(() => ({ 'main.js': '// Start coding here...' }));
+  const [fileContents, setFileContents] = useState({ 'main.js': '// Start coding here...' });
   const [currentFile, setCurrentFile] = useState('main.js');
   const [code, setCode] = useState('// Start coding here...');
   const [language, setLanguage] = useState('javascript');
@@ -549,7 +597,8 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
   const [terminalOutput, setTerminalOutput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [pendingInput, setPendingInput] = useState('');
+  // ✅ FIX: stdin state (textarea filled BEFORE clicking Run)
+  const [stdin, setStdin] = useState('');
   const [files, setFiles] = useState(['main.js']);
 
   const editorRef = useRef(null);
@@ -557,31 +606,38 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
   const isRemoteUpdateRef = useRef(false);
   const syncTimerRef = useRef(null);
 
-  useEffect(() => {
-    if (!isRemoteUpdateRef.current) {
-      setCode(fileContents[currentFile] || '');
-    }
-  }, [currentFile, fileContents]);
+  // ✅ FIX: Keep a ref that always has the latest currentFile
+  // This prevents stale closure bugs in socket event handlers
+  const currentFileRef = useRef(currentFile);
+  useEffect(() => { currentFileRef.current = currentFile; }, [currentFile]);
+
+  // ✅ FIX: Keep a ref for fileContents too
+  const fileContentsRef = useRef(fileContents);
+  useEffect(() => { fileContentsRef.current = fileContents; }, [fileContents]);
 
   const updateCode = (newCode, isRemote = false) => {
     if (isRemote) isRemoteUpdateRef.current = true;
     setCode(newCode);
-    setFileContents(prev => ({ ...prev, [currentFile]: newCode }));
+    setFileContents(prev => {
+      const updated = { ...prev, [currentFileRef.current]: newCode };
+      fileContentsRef.current = updated;
+      return updated;
+    });
     if (isRemote) setTimeout(() => { isRemoteUpdateRef.current = false; }, 100);
   };
 
-  const syncToServer = (value) => {
+  const syncToServer = useCallback((value) => {
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => {
       if (socketRef.current && !isRemoteUpdateRef.current) {
         socketRef.current.emit('code-full-sync', {
           code: value,
           roomId,
-          fileName: currentFile
+          fileName: currentFileRef.current
         });
       }
-    }, 80);
-  };
+    }, 100);
+  }, [roomId]);
 
   const handleEditorChange = (value) => {
     if (isRemoteUpdateRef.current) return;
@@ -599,14 +655,44 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
   };
 
   const handleFileSelect = (fileName) => {
+    // Save current file content before switching
+    const currentContent = fileContentsRef.current[currentFileRef.current] || '';
+    setFileContents(prev => {
+      const updated = { ...prev, [currentFileRef.current]: currentContent };
+      fileContentsRef.current = updated;
+      return updated;
+    });
+
     setCurrentFile(fileName);
+    currentFileRef.current = fileName;
+
+    // Load content for the new file
+    const newContent = fileContentsRef.current[fileName] || '';
+    setCode(newContent);
+
     socketRef.current.emit('file-switch', { roomId, fileName });
+
     const detectedLang = getLanguageFromFileName(fileName);
     if (detectedLang && detectedLang !== language) {
       setLanguage(detectedLang);
       socket.emit('language-change', { language: detectedLang, roomId });
-      toast.info(`Language set to ${LANGUAGE_OPTIONS.find(l => l.id === detectedLang)?.name || detectedLang}`);
+      toast.info(`Language → ${LANGUAGE_OPTIONS.find(l => l.id === detectedLang)?.name || detectedLang}`, { autoClose: 1500 });
     }
+  };
+
+  const handleFileDelete = (deletedFile, fallbackFile) => {
+    // Remove from local fileContents
+    setFileContents(prev => {
+      const updated = { ...prev };
+      delete updated[deletedFile];
+      fileContentsRef.current = updated;
+      return updated;
+    });
+    // If we were on the deleted file, switch to fallback
+    if (currentFileRef.current === deletedFile && fallbackFile) {
+      handleFileSelect(fallbackFile);
+    }
+    toast.success(`Deleted ${deletedFile}`);
   };
 
   const handleLanguageChange = (newLanguage) => {
@@ -614,17 +700,20 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
     socket.emit('language-change', { language: newLanguage, roomId });
   };
 
+  // ✅ FIX: stdin is now a controlled textarea, sent as-is when Run is clicked
   const handleRunCode = async () => {
     if (!code.trim()) { toast.error('No code to run'); return; }
     setIsRunning(true);
     setTerminalOutput('⏳ Running code...\n');
-    const inputToSend = pendingInput;
-    setPendingInput('');
     try {
-      const response = await axios.post(`${API_URL}/execute`, { code, language, input: inputToSend });
+      const response = await axios.post(`${API_URL}/execute`, {
+        code,
+        language,
+        input: stdin  // ← sends the textarea content as program stdin
+      });
       if (response.data.success) {
         setTerminalOutput(response.data.output || '✓ Executed successfully (no output)');
-        toast.success('Execution complete');
+        toast.success('Execution complete', { autoClose: 1500 });
       } else {
         setTerminalOutput(response.data.output || '✗ Execution failed');
         toast.error('Execution failed');
@@ -678,13 +767,8 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
     }
   };
 
-  const handleProgramInput = (input) => {
-    setPendingInput(input);
-    setTerminalOutput(prev => prev + `\n> ${input}\n`);
-  };
-
   const clearTerminal = () => setTerminalOutput('');
-  const shareRoom = () => { navigator.clipboard.writeText(roomId); toast.success('Room ID copied!'); };
+  const shareRoom = () => { navigator.clipboard.writeText(roomId); toast.success('Room ID copied!', { autoClose: 1500 }); };
   const downloadCode = () => {
     const blob = new Blob([code], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -693,7 +777,7 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
     a.download = currentFile;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success('Code downloaded!');
+    toast.success('Code downloaded!', { autoClose: 1500 });
   };
   const leaveRoom = () => { socket.disconnect(); onLeaveRoom(); };
 
@@ -704,33 +788,75 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
     const handleDocumentState = (state) => {
       isRemoteUpdateRef.current = true;
       const initialContent = state.content;
-      setFileContents(prev => ({ ...prev, [currentFile]: initialContent }));
+      setFileContents(prev => {
+        const updated = { ...prev, [currentFileRef.current]: initialContent };
+        fileContentsRef.current = updated;
+        return updated;
+      });
       setCode(initialContent);
       if (state.language) setLanguage(state.language);
       setTimeout(() => { isRemoteUpdateRef.current = false; }, 100);
     };
 
+    // ✅ FIX: use currentFileRef instead of currentFile (stale closure fix)
     const handleCodeSynced = ({ code: remoteCode, username: remoteUser, fileName: remoteFile }) => {
       if (remoteUser === username) return;
       isRemoteUpdateRef.current = true;
-      setFileContents(prev => ({ ...prev, [remoteFile]: remoteCode }));
-      if (remoteFile === currentFile) {
+      setFileContents(prev => {
+        const updated = { ...prev, [remoteFile]: remoteCode };
+        fileContentsRef.current = updated;
+        return updated;
+      });
+      // Only update the editor if the remote change is for the file we're currently viewing
+      if (remoteFile === currentFileRef.current) {
         setCode(remoteCode);
       }
       setTimeout(() => { isRemoteUpdateRef.current = false; }, 100);
     };
 
     const handleUsersUpdate = (users) => setOnlineUsers(users);
-    const handleUserJoined = (userData) => toast.info(`${userData.username} joined the room`);
-    const handleUserLeft = (userData) => toast.info(`${userData.username} left the room`);
+    const handleUserJoined = (userData) => toast.info(`${userData.username} joined`, { autoClose: 2000 });
+    const handleUserLeft = (userData) => toast.info(`${userData.username} left`, { autoClose: 2000 });
     const handleLanguageUpdate = (newLang) => setLanguage(newLang);
+
     const handleFileContent = ({ content, fileName }) => {
       isRemoteUpdateRef.current = true;
-      setFileContents(prev => ({ ...prev, [fileName]: content }));
-      if (fileName === currentFile) setCode(content);
+      setFileContents(prev => {
+        const updated = { ...prev, [fileName]: content };
+        fileContentsRef.current = updated;
+        return updated;
+      });
+      if (fileName === currentFileRef.current) setCode(content);
       setTimeout(() => { isRemoteUpdateRef.current = false; }, 100);
     };
-    const handleFilesList = (fileList) => setFiles(fileList);
+
+    const handleFilesList = (fileList) => {
+      setFiles(fileList);
+      // Initialize content entries for new files
+      setFileContents(prev => {
+        const updated = { ...prev };
+        fileList.forEach(f => { if (!(f in updated)) updated[f] = ''; });
+        fileContentsRef.current = updated;
+        return updated;
+      });
+    };
+
+    // ✅ NEW: Handle file deletion from server (another user deleted a file)
+    const handleFileDeleted = ({ deletedFile, newCurrentFile }) => {
+      setFileContents(prev => {
+        const updated = { ...prev };
+        delete updated[deletedFile];
+        fileContentsRef.current = updated;
+        return updated;
+      });
+      if (currentFileRef.current === deletedFile && newCurrentFile) {
+        setCurrentFile(newCurrentFile);
+        currentFileRef.current = newCurrentFile;
+        const newContent = fileContentsRef.current[newCurrentFile] || '';
+        setCode(newContent);
+        socket.emit('file-switch', { roomId, fileName: newCurrentFile });
+      }
+    };
 
     socket.on('document-state', handleDocumentState);
     socket.on('code-synced', handleCodeSynced);
@@ -740,33 +866,38 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
     socket.on('language-update', handleLanguageUpdate);
     socket.on('file-content', handleFileContent);
     socket.on('files-list', handleFilesList);
+    socket.on('file-deleted', handleFileDeleted);
     socket.on('error', (error) => toast.error(error.message));
 
     return () => {
-      socket.off('document-state');
-      socket.off('code-synced');
-      socket.off('users-update');
-      socket.off('user-joined');
-      socket.off('user-left');
-      socket.off('language-update');
-      socket.off('file-content');
-      socket.off('files-list');
+      socket.off('document-state', handleDocumentState);
+      socket.off('code-synced', handleCodeSynced);
+      socket.off('users-update', handleUsersUpdate);
+      socket.off('user-joined', handleUserJoined);
+      socket.off('user-left', handleUserLeft);
+      socket.off('language-update', handleLanguageUpdate);
+      socket.off('file-content', handleFileContent);
+      socket.off('files-list', handleFilesList);
+      socket.off('file-deleted', handleFileDeleted);
       socket.off('error');
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     };
-  }, [roomId, username, userId, currentFile]);
+  }, [roomId, username, userId]);
+  // ✅ Note: currentFile removed from deps since we use currentFileRef
 
   return (
     <div className="app">
       <header className="app-header">
         <div className="header-left">
-          <Code2 className="logo-icon-sm" />
-          <h1>Unified IDE</h1>
+          <div className="header-logo">
+            <Code2 size={18} className="logo-icon-sm" />
+            <h1>Unified IDE</h1>
+          </div>
         </div>
         <div className="header-center">
           <div className="room-info">
-            <span>Room: <strong>{roomId}</strong></span>
-            <span>as <strong>{username}</strong></span>
+            <span className="room-badge">Room: <strong>{roomId}</strong></span>
+            <span className="user-badge">as <strong>{username}</strong></span>
             <LanguageSelector currentLanguage={language} onLanguageChange={handleLanguageChange} />
             <button onClick={shareRoom} className="btn btn-sm btn-secondary"><Share2 size={12} /> Share</button>
             <button onClick={downloadCode} className="btn btn-sm btn-secondary"><Download size={12} /> Export</button>
@@ -774,7 +905,9 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
         </div>
         <div className="header-right">
           <div className="online-users-toggle" onClick={() => setShowUsersPopup(!showUsersPopup)}>
-            <Users size={16} /><span>{onlineUsers.length}</span>
+            <div className="online-dot"></div>
+            <Users size={14} />
+            <span>{onlineUsers.length}</span>
           </div>
           <button onClick={leaveRoom} className="btn btn-sm btn-warning"><LogOut size={12} /> Leave</button>
           {showUsersPopup && (
@@ -786,7 +919,7 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
               <div className="popup-users-list">
                 {onlineUsers.map((u, i) => (
                   <div key={i} className={`popup-user-item ${u.username === username ? 'current-user' : ''}`}>
-                    <div className="user-avatar"></div>
+                    <div className="user-avatar">{(u.username || '?')[0].toUpperCase()}</div>
                     <span>{u.username} {u.username === username && '(You)'}</span>
                   </div>
                 ))}
@@ -795,13 +928,18 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
           )}
         </div>
       </header>
+
       <div className="main-content">
         <div className="editor-section">
           <div className="editor-header">
-            <h3>{LANGUAGE_OPTIONS.find(l => l.id === language)?.name} • {currentFile}</h3>
+            <div className="editor-file-info">
+              <FileCode size={14} className="file-tab-icon" />
+              <span className="file-tab">{currentFile}</span>
+              <span className="lang-badge">{LANGUAGE_OPTIONS.find(l => l.id === language)?.name}</span>
+            </div>
             <div className="editor-actions">
-              <button onClick={handleRunCode} className="btn btn-success btn-sm" disabled={isRunning}>
-                <Play size={12} /> {isRunning ? 'Running...' : 'Run'}
+              <button onClick={handleRunCode} className="btn btn-success btn-sm run-btn" disabled={isRunning}>
+                <Play size={12} /> {isRunning ? 'Running...' : 'Run Code'}
               </button>
               <button onClick={handleCodeAnalysis} className="btn btn-warning btn-sm" disabled={isAnalyzing}>
                 <AlertTriangle size={12} /> Analyze
@@ -821,14 +959,24 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
                 fontSize: 13,
                 wordWrap: 'on',
                 automaticLayout: true,
-                scrollBeyondLastLine: false
+                scrollBeyondLastLine: false,
+                fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+                fontLigatures: true,
+                cursorBlinking: 'smooth',
+                cursorSmoothCaretAnimation: true,
+                smoothScrolling: true,
               }}
             />
           </div>
         </div>
+
         <div className={`sidebar ${isSidebarOpen ? '' : 'collapsed'}`}>
           <div className="sidebar-toggle-bar">
-            <button className="sidebar-toggle-btn" onClick={() => setIsSidebarOpen(!isSidebarOpen)} title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}>
+            <button
+              className="sidebar-toggle-btn"
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+            >
               {isSidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
             </button>
           </div>
@@ -838,6 +986,7 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
                 roomId={roomId}
                 currentFile={currentFile}
                 onFileSelect={handleFileSelect}
+                onFileDelete={handleFileDelete}
                 socket={socketRef.current}
                 files={files}
               />
@@ -851,14 +1000,16 @@ function EditorPage({ roomId, username, userId, onLeaveRoom }) {
               />
               <TerminalComponent
                 output={terminalOutput}
-                onInput={handleProgramInput}
                 onClear={clearTerminal}
                 isRunning={isRunning}
+                stdin={stdin}
+                onStdinChange={setStdin}
               />
             </>
           )}
         </div>
       </div>
+
       <ToastContainer
         position="bottom-right"
         autoClose={3000}
@@ -886,6 +1037,10 @@ function App() {
   if (loading) {
     return (
       <div className="app-loading">
+        <div className="aurora-bg">
+          <div className="aurora a1"></div>
+          <div className="aurora a2"></div>
+        </div>
         <div className="loading-spinner-large"></div>
         <p>Loading...</p>
       </div>
