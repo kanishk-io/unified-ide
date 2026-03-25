@@ -13,27 +13,27 @@ const roomSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
-  ownerUsername: {
-    type: String,
-    required: true
+  ownerUsername: { type: String, required: true },
+
+  // ── Persisted editor state (auto-saved every ~5 s) ──────
+  savedContent:  { type: String,  default: '// Start coding here...' },
+  savedLanguage: { type: String,  default: 'javascript' },
+  // { "filename": "file content", ... }
+  savedFiles: {
+    type: mongoose.Schema.Types.Mixed,
+    default: { 'main.js': '// Start coding here...' }
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  lastActivity: {
-    type: Date,
-    default: Date.now
-  },
-  // expiresAt resets on every activity update.
-  // MongoDB TTL index auto-deletes the document when expiresAt passes.
+
+  // ── Lifecycle ────────────────────────────────────────────
+  createdAt:    { type: Date, default: Date.now },
+  lastActivity: { type: Date, default: Date.now },
+  // TTL: MongoDB auto-deletes when expiresAt passes.
+  // Resets to +24h on every code save.
   expiresAt: {
     type: Date,
-    default: () => new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours from now
+    default: () => new Date(Date.now() + 24 * 60 * 60 * 1000)
   }
 });
 
-// TTL index: MongoDB will auto-delete documents when expiresAt is reached
 roomSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-
 module.exports = mongoose.model('Room', roomSchema);
