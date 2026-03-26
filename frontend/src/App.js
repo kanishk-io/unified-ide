@@ -4,7 +4,7 @@ import React, {
 } from 'react';
 import io from 'socket.io-client';
 import Editor from '@monaco-editor/react';
-import { toast, ToastContainer } from 'react-toastify';
+import { toast, ToastContainer, Bounce } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import axios from 'axios';
 import {
@@ -993,8 +993,20 @@ function EditorPage({ roomId, username, userId, isCreator, onLeaveRoom }) {
         </div>
       </div>
 
-      <ToastContainer position="bottom-right" autoClose={1500} hideProgressBar={false}
-        newestOnTop closeOnClick pauseOnFocusLoss={false} draggable pauseOnHover={false} theme="dark" limit={3} closeButton={false}/>
+      <ToastContainer 
+        position="bottom-right" 
+        autoClose={900} 
+        hideProgressBar={false}
+        newestOnTop 
+        closeOnClick 
+        pauseOnFocusLoss={false} 
+        draggable={false}
+        pauseOnHover={false} 
+        theme="dark" 
+        limit={3} 
+        closeButton={false}
+        transition={Bounce}
+      />
     </div>
   );
 }
