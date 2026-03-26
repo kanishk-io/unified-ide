@@ -389,13 +389,13 @@ function FileSystemSection({ roomId, currentFile, onFileSelect, onFileDelete, so
 
   const create = () => {
     if (!newName.trim()) return;
-    if (files.includes(newName.trim())) { toast.error('File already exists'); return; }
+    if (files.includes(newName.trim())) { toast.error('File already exists', { autoClose: 1200 }); return; }
     sp?.emit('file-create', { roomId, fileName: newName.trim() });
     onFileSelect(newName.trim()); setNew('');
     toast.success(`Created ${newName.trim()}`, { autoClose: 1200 });
   };
   const del = f => {
-    if (files.length <= 1) { toast.error('Cannot delete the only file'); return; }
+    if (files.length <= 1) { toast.error('Cannot delete the only file', { autoClose: 1200 }); return; }
     sp?.emit('file-delete', { roomId, fileName: f });
     setDel(null); onFileDelete(f, files.filter(x => x !== f)[0]);
   };
@@ -536,23 +536,26 @@ const TerminalComponent = forwardRef(function TerminalComponent({ code, language
         // Strip any repeated prompt text from the start of output
         // (JDoodle/Piston echo stdin inline with output for C/C++)
         let clean = raw;
-        addLine(clean, r.data.success ? 'out' : 'err');
+        // Split output by newlines to preserve formatting (pyramid, multi-line output)
+        clean.split('\n').forEach(line => {
+          addLine(line, r.data.success ? 'out' : 'err');
+        });
       } else {
         addLine('(no output)', 'meta');
       }
       addLine('────────────────────────────────────', 'div');
       if (r.data.success) toast.success('Done ✓', { autoClose: 1000 });
-      else toast.error('Execution failed');
+      else toast.error('Execution failed', { autoClose: 1500 });
     } catch (e) {
       addLine(`Error: ${e.response?.data?.output || e.message}`, 'err');
-      toast.error('Execution error');
+      toast.error('Execution error', { autoClose: 1500 });
     } finally {
       setMode('done');
     }
   }, [code, language, addLine]);
 
   const handleRun = useCallback(async () => {
-    if (!code?.trim()) { toast.error('No code to run'); return; }
+    if (!code?.trim()) { toast.error('No code to run', { autoClose: 1200 }); return; }
     if (mode === 'running' || mode === 'collecting') return;
 
     // Reset
@@ -991,7 +994,7 @@ function EditorPage({ roomId, username, userId, isCreator, onLeaveRoom }) {
       </div>
 
       <ToastContainer position="bottom-right" autoClose={3000} hideProgressBar={false}
-        newestOnTop closeOnClick pauseOnFocusLoss={false} draggable pauseOnHover theme="dark" limit={3}/>
+        newestOnTop closeOnClick pauseOnFocusLoss={false} draggable pauseOnHover theme="dark" limit={3} closeButton={false}/>
     </div>
   );
 }
