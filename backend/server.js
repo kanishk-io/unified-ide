@@ -5,12 +5,12 @@ const _cors    = require('cors');
 const axios    = require('axios');
 require('dotenv').config();
 
-const connectDB  = require('./config/database');
-const Project    = require('./models/Project');
-const Room       = require('./models/Room');
-const { auth }   = require('./middleware/auth');
-const authCtrl   = require('./controllers/authController');
-const execSvc    = require('./services/codeExecutionService');
+const connectDB = require('./config/database');
+const Project   = require('./models/Project');
+const Room      = require('./models/Room');
+const { auth }  = require('./middleware/auth');
+const authCtrl  = require('./controllers/authController');
+const execSvc   = require('./services/codeExecutionService');
 
 const app    = express();
 const server = http.createServer(app);
@@ -44,55 +44,67 @@ const io = socketIo(server, {
 let aiStatus = { status: 'unknown', model: null };
 const setAI  = (s, m = null) => { aiStatus = { status: s, model: m }; };
 
-// ── GEMINI ────────────────────────────────────────────────
-// Try ALL models even on 429 – different models have independent quotas.
-// Only a network/server error (5xx) stops the loop.
-// DO NOT add "how to fix" messages – the end-user is not the developer.
-const GEMINI_MODELS = [
-  'gemini-1.5-flash-8b',          // most generous free tier
-  'gemini-1.5-flash',             // very reliable free tier
-  'gemini-2.0-flash-lite',        // lightweight
-  'gemini-2.0-flash',             // standard
-  'gemini-2.5-flash-preview-04-17' // latest preview
+// ── OPENROUTER AI ─────────────────────────────────────────
+// OpenRouter gives access to many free models.
+// Get your free API key at: https://openrouter.ai
+// Add to Render environment variables as: OPENROUTER_API_KEY
+//
+// Free models tried in order (fastest/most reliable first):
+const OR_MODELS = [
+  'meta-llama/llama-3.1-8b-instruct:free',
+  'deepseek/deepseek-r1:free',
+  'google/gemma-3-1b-it:free',
+  'mistralai/mistral-7b-instruct:free',
+  'openchat/openchat-7b:free'
 ];
 
-async function callGemini(prompt, apiKey) {
+async function callAI(systemPrompt, userPrompt, apiKey) {
   let lastErr = null;
-  for (const model of GEMINI_MODELS) {
+  for (const model of OR_MODELS) {
     try {
-      console.log(`🤖 → ${model}`);
-      // try v1 first (more stable for newer models), fall back to v1beta
-      let resp;
-      for (const ver of ['v1beta', 'v1']) {
-        try {
-          resp = await axios.post(
-            `https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`,
-            { contents: [{ parts: [{ text: prompt }] }] },
-            { timeout: 30000, headers: { 'Content-Type': 'application/json' } }
-          );
-          break; // success
-        } catch (e) {
-          if (e.response?.status === 404) continue; // try other api version
-          throw e;
+      console.log(`🤖 OpenRouter → ${model}`);
+      const resp = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user',   content: userPrompt }
+          ],
+          max_tokens: 2048,
+          temperature: 0.2
+        },
+        {
+          timeout: 40000,
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://unified-ide-frontend.onrender.com',
+            'X-Title': 'Unified IDE'
+          }
         }
-      }
-      if (resp?.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+      );
+
+      const text = resp.data?.choices?.[0]?.message?.content;
+      if (text) {
         setAI('ok', model);
         console.log(`✅ ${model} worked`);
-        return resp.data.candidates[0].content.parts[0].text;
+        return text;
       }
     } catch (err) {
       lastErr = err;
       const status = err.response?.status;
-      const msg = (err.response?.data?.error?.message || err.message || '').slice(0, 100);
+      const msg = (err.response?.data?.error?.message || err.message || '').slice(0, 120);
       console.log(`⚠️  ${model} → ${status}: ${msg}`);
-      // On 5xx (server error) stop – no point continuing
+      // 5xx = server error, stop trying
       if (status && status >= 500) break;
-      // On 404/400/429 → try next model (each model has its own quota)
+      // 401 = bad API key, stop immediately
+      if (status === 401) { setAI('no-key'); throw new Error('Invalid API key'); }
+      // 429 or 400 → try next model
     }
   }
   setAI('error');
-  throw lastErr || new Error('All Gemini models unavailable');
+  throw lastErr || new Error('All AI models unavailable');
 }
 
 // ── DOCUMENT ──────────────────────────────────────────────
@@ -133,13 +145,13 @@ class Document {
     if (this.files.has(name)) { this.content = this.files.get(name); this.currentFile = name; }
     return { content: this.content, fileName: this.currentFile };
   }
-  getFiles()    { return [...this.files.keys()]; }
-  getAllObj()   { const o = {}; for (const [k, v] of this.files) o[k] = v; return o; }
+  getFiles()  { return [...this.files.keys()]; }
+  getAllObj()  { const o = {}; for (const [k, v] of this.files) o[k] = v; return o; }
 }
 
 const activeSessions = new Map();
 
-// Auto-save room to DB, debounced 5 s
+// Auto-save room to DB (debounced 5 s after last change)
 const saveTimers = new Map();
 async function scheduleSave(roomId) {
   if (saveTimers.has(roomId)) clearTimeout(saveTimers.get(roomId));
@@ -152,24 +164,25 @@ async function scheduleSave(roomId) {
         savedFiles: s.getAllObj(), lastActivity: new Date(),
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
       });
-    } catch (e) { /* non-fatal – room may not be in DB */ }
+    } catch (e) { /* non-fatal */ }
   }, 5000));
 }
 
 async function getRoomUsers(roomId) {
   const socks = await io.in(roomId).fetchSockets();
   const seen = new Set();
-  return socks.filter(s => s.username && !seen.has(s.username) && seen.add(s.username))
-              .map(s => ({ id: s.id, username: s.username }));
+  return socks
+    .filter(s => s.username && !seen.has(s.username) && seen.add(s.username))
+    .map(s => ({ id: s.id, username: s.username }));
 }
 
 // ── API ROUTES ────────────────────────────────────────────
+
 app.get('/api/status', (_, res) =>
   res.json({ success: true, status: 'Online', timestamp: new Date(), activeRooms: activeSessions.size }));
 
 app.get('/api/ai/status', (_, res) => {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) return res.json({ status: 'no-key' });
+  if (!process.env.OPENROUTER_API_KEY) return res.json({ status: 'no-key' });
   res.json(aiStatus);
 });
 
@@ -198,6 +211,7 @@ app.post('/api/execute', async (req, res) => {
   try {
     const { code, language, input } = req.body;
     if (!code || !language) return res.status(400).json({ success: false, output: 'Code and language required' });
+    console.log(`⚡ Execute ${language} | stdin: ${(input||'').length} chars`);
     const result = await execSvc.executeCode(code, language, input || '');
     res.json(result);
   } catch (err) {
@@ -208,32 +222,31 @@ app.post('/api/execute', async (req, res) => {
 app.post('/api/ai/generate', async (req, res) => {
   const { prompt, language } = req.body;
   if (!prompt) return res.status(400).json({ success: false, error: 'Prompt required' });
-  const key = process.env.GEMINI_API_KEY;
+  const key = process.env.OPENROUTER_API_KEY;
   if (!key) { setAI('no-key'); return res.json({ success: false, error: 'AI not configured', code: '// AI API key not configured' }); }
   try {
-    const p = `Generate ONLY code, no markdown, no backticks, no explanations.\nLanguage: ${language}\nTask: ${prompt}\nReturn only raw code.`;
-    let code = await callGemini(p, key);
-    code = code.replace(/```\w*\n?/g, '').replace(/```/g, '').trim();
+    const system = 'You are an expert programmer. Return ONLY raw code with no markdown, no backticks, no explanations. Just the code itself.';
+    const user   = `Language: ${language}\nTask: ${prompt}\n\nReturn ONLY the raw executable code.`;
+    let code = await callAI(system, user, key);
+    code = code.replace(/```[\w]*\n?/g, '').replace(/```/g, '').trim();
     res.json({ success: true, code });
   } catch (err) {
-    // Simple error message – no how-to-fix instructions
-    const msg = err.response?.data?.error?.message || err.message;
-    res.json({ success: false, error: msg, code: `// AI Error: ${msg}` });
+    res.json({ success: false, error: err.message, code: `// AI Error: ${err.message}` });
   }
 });
 
 app.post('/api/ai/analyze', async (req, res) => {
   const { code, language } = req.body;
   if (!code) return res.status(400).json({ success: false, error: 'Code required' });
-  const key = process.env.GEMINI_API_KEY;
+  const key = process.env.OPENROUTER_API_KEY;
   if (!key) { setAI('no-key'); return res.json({ success: false, analysis: 'AI not configured' }); }
   try {
-    const p = `Analyze this ${language} code:\n${code.slice(0, 3000)}\n\nProvide:\n**Bugs:** (or "None")\n**Quality:** score /10\n**Security:** (or "None")\n**Performance:** tips\n**Recommendations:** top 3`;
-    const analysis = await callGemini(p, key);
+    const system = 'You are a senior code reviewer. Analyze code and provide structured feedback.';
+    const user   = `Analyze this ${language} code:\n\`\`\`${language}\n${code.slice(0, 3000)}\n\`\`\`\n\nProvide:\n**Bugs:** (or "None found")\n**Quality:** score /10\n**Security:** (or "None found")\n**Performance:** tips\n**Recommendations:** top 3 improvements`;
+    const analysis = await callAI(system, user, key);
     res.json({ success: true, analysis: analysis.trim() });
   } catch (err) {
-    const msg = err.response?.data?.error?.message || err.message;
-    res.json({ success: false, analysis: `Analysis failed: ${msg}` });
+    res.json({ success: false, analysis: `Analysis failed: ${err.message}` });
   }
 });
 
@@ -262,10 +275,10 @@ app.get('/api/rooms/active', auth, async (req, res) => {
 
 app.post('/api/projects', auth, async (req, res) => {
   const { name, description, language, code, isPublic } = req.body;
-  const projectId = Math.random().toString(36).slice(2, 10).toUpperCase();
   try {
     const project = await new Project({
-      projectId, name: name || 'Untitled', description: description || '',
+      projectId: Math.random().toString(36).slice(2,10).toUpperCase(),
+      name: name || 'Untitled', description: description || '',
       owner: req.user._id, language: language || 'javascript', code: code || '',
       isPublic: isPublic || false,
       versions: [{ content: code || '', language: language || 'javascript', createdBy: req.user._id }]
@@ -311,8 +324,7 @@ io.on('connection', socket => {
 
     socket.emit('document-state', session.getState());
     socket.emit('files-list', session.getFiles());
-    const users = await getRoomUsers(roomId);
-    io.to(roomId).emit('users-update', users);
+    io.to(roomId).emit('users-update', await getRoomUsers(roomId));
     socket.to(roomId).emit('user-joined', { id: socket.id, username });
   });
 
@@ -336,8 +348,11 @@ io.on('connection', socket => {
   socket.on('file-delete', ({ roomId, fileName }) => {
     const s = activeSessions.get(roomId); if (!s) return;
     const r = s.deleteFile(fileName);
-    if (r.success) { io.to(roomId).emit('files-list', r.files); io.to(roomId).emit('file-deleted', { deletedFile: fileName, newCurrentFile: r.newCurrentFile }); scheduleSave(roomId); }
-    else socket.emit('error', { message: r.error });
+    if (r.success) {
+      io.to(roomId).emit('files-list', r.files);
+      io.to(roomId).emit('file-deleted', { deletedFile: fileName, newCurrentFile: r.newCurrentFile });
+      scheduleSave(roomId);
+    } else socket.emit('error', { message: r.error });
   });
 
   socket.on('file-switch', ({ roomId, fileName }) => {
@@ -368,13 +383,14 @@ io.on('connection', socket => {
   });
 });
 
+// ── START ─────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log('='.repeat(50));
+  console.log('='.repeat(52));
   console.log('🚀 Unified IDE Backend');
-  console.log('='.repeat(50));
-  console.log(`📍 Port   : ${PORT}`);
-  console.log(`🤖 Gemini : ${process.env.GEMINI_API_KEY ? '✅ Key present' : '❌ Missing GEMINI_API_KEY'}`);
-  console.log(`⚡ JDoodle: ${process.env.JDOODLE_CLIENT_ID ? '✅' : '⚠️  Piston fallback'}`);
-  console.log('='.repeat(50));
+  console.log('='.repeat(52));
+  console.log(`📍 Port        : ${PORT}`);
+  console.log(`🤖 OpenRouter  : ${process.env.OPENROUTER_API_KEY ? '✅ Key present' : '❌ Missing OPENROUTER_API_KEY'}`);
+  console.log(`⚡ JDoodle     : ${process.env.JDOODLE_CLIENT_ID ? '✅' : '⚠️  Piston fallback'}`);
+  console.log('='.repeat(52));
 });
