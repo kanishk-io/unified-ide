@@ -45,24 +45,25 @@ let aiStatus = { status: 'unknown', model: null };
 const setAI  = (s, m = null) => { aiStatus = { status: s, model: m }; };
 
 // ── OPENROUTER AI ─────────────────────────────────────────
-// OpenRouter gives access to many free models.
-// Get your free API key at: https://openrouter.ai
+// OpenRouter gives access to many AI models.
+// Get your API key at: https://openrouter.ai
 // Add to Render environment variables as: OPENROUTER_API_KEY
 //
-// Free models tried in order (fastest/most reliable first):
+// Models tried in order (fastest/most reliable first):
+// Updated with currently available models from OpenRouter
 const OR_MODELS = [
-  'meta-llama/llama-3.1-8b-instruct:free',
-  'deepseek/deepseek-r1:free',
-  'google/gemma-3-1b-it:free',
-  'mistralai/mistral-7b-instruct:free',
-  'openchat/openchat-7b:free'
+  'openai/gpt-3.5-turbo',
+  'anthropic/claude-3-haiku',
+  'meta-llama/llama-2-7b-chat',
+  'mistralai/mistral-7b',
+  'google/palm-2-chat-bison'
 ];
 
 async function callAI(systemPrompt, userPrompt, apiKey) {
   let lastErr = null;
   for (const model of OR_MODELS) {
     try {
-      console.log(`🤖 OpenRouter → ${model}`);
+      console.log(`🤖 Trying: ${model}`);
       const resp = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
@@ -88,23 +89,33 @@ async function callAI(systemPrompt, userPrompt, apiKey) {
       const text = resp.data?.choices?.[0]?.message?.content;
       if (text) {
         setAI('ok', model);
-        console.log(`✅ ${model} worked`);
+        console.log(`✅ Success with ${model}`);
         return text;
       }
     } catch (err) {
       lastErr = err;
       const status = err.response?.status;
       const msg = (err.response?.data?.error?.message || err.message || '').slice(0, 120);
-      console.log(`⚠️  ${model} → ${status}: ${msg}`);
-      // 5xx = server error, stop trying
-      if (status && status >= 500) break;
-      // 401 = bad API key, stop immediately
-      if (status === 401) { setAI('no-key'); throw new Error('Invalid API key'); }
-      // 429 or 400 → try next model
+      console.log(`❌ ${model} failed → ${status}: ${msg}`);
+      if (status && status >= 500) {
+        console.log(`🛑 Server error (${status}), stopping`);
+        break;
+      }
+      if (status === 401 || status === 403) { 
+        setAI('no-key'); 
+        console.log(`🛑 Auth failed - check API key`);
+        throw new Error('Invalid or expired API key'); 
+      }
+      if (status === 404) {
+        console.log(`📛 Model not available, trying next...`);
+        continue;
+      }
+      console.log(`⚠️  Error, trying next model...`);
     }
   }
   setAI('error');
-  throw lastErr || new Error('All AI models unavailable');
+  console.log(`❌ All models failed. Last error: ${lastErr?.message}`);
+  throw lastErr || new Error('All AI models failed - check OpenRouter API key and account credits');
 }
 
 // ── DOCUMENT ──────────────────────────────────────────────
