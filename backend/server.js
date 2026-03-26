@@ -223,15 +223,20 @@ app.post('/api/ai/generate', async (req, res) => {
   const { prompt, language } = req.body;
   if (!prompt) return res.status(400).json({ success: false, error: 'Prompt required' });
   const key = process.env.OPENROUTER_API_KEY;
-  if (!key) { setAI('no-key'); return res.json({ success: false, error: 'AI not configured', code: '// AI API key not configured' }); }
+  if (!key) { 
+    setAI('no-key'); 
+    return res.json({ success: false, error: 'AI not configured', code: '// API key not set - contact admin' }); 
+  }
   try {
     const system = 'You are an expert programmer. Return ONLY raw code with no markdown, no backticks, no explanations. Just the code itself.';
     const user   = `Language: ${language}\nTask: ${prompt}\n\nReturn ONLY the raw executable code.`;
     let code = await callAI(system, user, key);
     code = code.replace(/```[\w]*\n?/g, '').replace(/```/g, '').trim();
+    setAI('ok');
     res.json({ success: true, code });
   } catch (err) {
-    res.json({ success: false, error: err.message, code: `// AI Error: ${err.message}` });
+    console.error('AI generate error:', err.message);
+    res.status(500).json({ success: false, error: err.message, code: `// Error: ${err.message}` });
   }
 });
 
@@ -239,14 +244,19 @@ app.post('/api/ai/analyze', async (req, res) => {
   const { code, language } = req.body;
   if (!code) return res.status(400).json({ success: false, error: 'Code required' });
   const key = process.env.OPENROUTER_API_KEY;
-  if (!key) { setAI('no-key'); return res.json({ success: false, analysis: 'AI not configured' }); }
+  if (!key) { 
+    setAI('no-key'); 
+    return res.json({ success: false, analysis: 'API key not configured - contact admin' }); 
+  }
   try {
     const system = 'You are a senior code reviewer. Analyze code and provide structured feedback.';
     const user   = `Analyze this ${language} code:\n\`\`\`${language}\n${code.slice(0, 3000)}\n\`\`\`\n\nProvide:\n**Bugs:** (or "None found")\n**Quality:** score /10\n**Security:** (or "None found")\n**Performance:** tips\n**Recommendations:** top 3 improvements`;
     const analysis = await callAI(system, user, key);
+    setAI('ok');
     res.json({ success: true, analysis: analysis.trim() });
   } catch (err) {
-    res.json({ success: false, analysis: `Analysis failed: ${err.message}` });
+    console.error('AI analyze error:', err.message);
+    res.status(500).json({ success: false, analysis: `Error: ${err.message}` });
   }
 });
 
@@ -295,6 +305,8 @@ io.on('connection', socket => {
     if (!roomId || !username) { socket.emit('error', { message: 'Room ID and username required' }); return; }
     console.log(`👤 ${username} → ${roomId}`);
     socket.join(roomId); socket.roomId = roomId; socket.username = username; socket.userId = userId;
+    // Ensure user is added to socket before any broadcasts
+    socket.username = username;
 
     let session = activeSessions.get(roomId);
     if (!session) {
@@ -324,7 +336,9 @@ io.on('connection', socket => {
 
     socket.emit('document-state', session.getState());
     socket.emit('files-list', session.getFiles());
-    io.to(roomId).emit('users-update', await getRoomUsers(roomId));
+    // Broadcast to everyone current user list (including the new user)
+    const currentUsers = await getRoomUsers(roomId);
+    io.to(roomId).emit('users-update', currentUsers);
     socket.to(roomId).emit('user-joined', { id: socket.id, username });
   });
 
@@ -373,13 +387,14 @@ io.on('connection', socket => {
     socket.to(roomId).emit('user-left', { id: socket.id, username: socket.username });
     const s = activeSessions.get(roomId);
     if (s) io.to(roomId).emit('cursors-update', s.removeClient(socket.id));
+    // Updated: broadcast users immediately and consistently
     setTimeout(async () => {
       try {
         const users = await getRoomUsers(roomId);
         io.to(roomId).emit('users-update', users);
         if (users.length === 0) setTimeout(() => activeSessions.delete(roomId), 300000);
-      } catch (e) {}
-    }, 600);
+      } catch (e) { console.error('Error updating users on disconnect:', e.message); }
+    }, 200);
   });
 });
 

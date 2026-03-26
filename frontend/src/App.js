@@ -737,9 +737,9 @@ function EditorPage({ roomId, username, userId, isCreator, onLeaveRoom }) {
   const syncToServer = useCallback(val => {
     if (syncTimer.current) clearTimeout(syncTimer.current);
     syncTimer.current = setTimeout(() => {
-      if (socketRef.current && !remoteRef.current)
+      if (socketRef.current && !remoteRef.current && val !== null && val !== undefined)
         socketRef.current.emit('code-full-sync', { code: val, roomId, fileName: curFileRef.current });
-    }, 100);
+    }, 150);
   }, [roomId]);
 
   const handleEditorChange = val => { if (remoteRef.current) return; updateCode(val); syncToServer(val); };
@@ -757,10 +757,15 @@ function EditorPage({ roomId, username, userId, isCreator, onLeaveRoom }) {
     setCF(name); curFileRef.current = name;
     setCode(fcRef.current[name] || '');
     socketRef.current?.emit('file-switch', { roomId, fileName: name });
-    const det = getFileLang(name);
-    if (det && det !== language) {
-      setLang(det); socket.emit('language-change', { language: det, roomId });
-      toast.info(`Language → ${LANGUAGE_OPTIONS.find(l => l.id === det)?.name}`, { autoClose: 1200 });
+    // Always check and update language based on file extension
+    const fileLang = getFileLang(name);
+    if (fileLang) {
+      // File has a detectable language from extension
+      setLang(fileLang);
+      socket.emit('language-change', { language: fileLang, roomId });
+      if (fileLang !== language) {
+        toast.info(`${LANGUAGE_OPTIONS.find(l => l.id === fileLang)?.name}`, { autoClose: 1000 });
+      }
     }
   }, [roomId, language]);
 
@@ -775,23 +780,47 @@ function EditorPage({ roomId, username, userId, isCreator, onLeaveRoom }) {
     if (!prompt.trim()) return;
     setAnal(true);
     try {
-      const r = await axios.post(`${API_URL}/ai/generate`, { prompt, language });
-      setAiSt(r.data.success ? 'ok' : 'quota');
-      if (r.data.success) { setAiR(r.data.code); toast.success('Code generated!'); }
-      else { setAiR(`// Error: ${r.data.error}\n\n${r.data.code || ''}`); toast.error(r.data.error || 'AI failed'); }
-    } catch (e) { setAiSt('error'); setAiR(`// Error: ${e.message}`); toast.error('AI unavailable'); }
+      const r = await axios.post(`${API_URL}/ai/generate`, { prompt, language }, { timeout: 45000 });
+      if (r.data.success) {
+        setAiSt('ok');
+        setAiR(r.data.code);
+        toast.success('Generated!', { autoClose: 1200 });
+      } else {
+        setAiSt('error');
+        setAiR(`// Error: ${r.data.error}\n\n${r.data.code || ''}`);
+        toast.error(r.data.error || 'Generation failed', { autoClose: 1500 });
+      }
+    } catch (e) {
+      const errMsg = e.response?.data?.error || e.message || 'Network error';
+      setAiSt('error');
+      setAiR(`// Error: ${errMsg}`);
+      console.error('AI generate error:', e);
+      toast.error('AI unavailable', { autoClose: 1500 });
+    }
     finally { setAnal(false); setAiP(''); }
   };
 
   const handleAnalyze = async () => {
-    if (!code.trim()) { toast.error('No code to analyze'); return; }
+    if (!code.trim()) { toast.error('No code to analyze', { autoClose: 1200 }); return; }
     setAnal(true);
     try {
-      const r = await axios.post(`${API_URL}/ai/analyze`, { code, language });
-      setAiSt(r.data.success ? 'ok' : 'quota');
-      if (r.data.success) { setAiR(r.data.analysis); toast.success('Analysis done!'); }
-      else { setAiR(r.data.analysis || 'Analysis failed'); toast.error('Analysis failed'); }
-    } catch (e) { setAiSt('error'); setAiR(`Analysis error: ${e.message}`); toast.error('Analysis failed'); }
+      const r = await axios.post(`${API_URL}/ai/analyze`, { code, language }, { timeout: 45000 });
+      if (r.data.success) {
+        setAiSt('ok');
+        setAiR(r.data.analysis);
+        toast.success('Analyzed!', { autoClose: 1200 });
+      } else {
+        setAiSt('error');
+        setAiR(r.data.analysis || 'Analysis failed');
+        toast.error('Analysis failed', { autoClose: 1500 });
+      }
+    } catch (e) {
+      const errMsg = e.response?.data?.error || e.message || 'Network error';
+      setAiSt('error');
+      setAiR(`// Error: ${errMsg}`);
+      console.error('AI analyze error:', e);
+      toast.error('Analysis failed', { autoClose: 1500 });
+    }
     finally { setAnal(false); }
   };
 
@@ -839,21 +868,26 @@ function EditorPage({ roomId, username, userId, isCreator, onLeaveRoom }) {
         socket.emit('file-switch', { roomId, fileName: newCurrentFile });
       }
     };
+    
+    const onUsersUpdate = u => {
+      setOU(u);
+    };
 
     socket.on('document-state',  onDocState);
     socket.on('code-synced',     onCodeSynced);
-    socket.on('users-update',    u => setOU(u));
-    socket.on('user-joined',     u => toast.info(`${u.username} joined`, { autoClose:2000 }));
-    socket.on('user-left',       u => toast.info(`${u.username} left`,   { autoClose:2000 }));
+    socket.on('users-update',    onUsersUpdate);
+    socket.on('user-joined',     u => toast.info(`${u.username} joined`, { autoClose:1200 }));
+    socket.on('user-left',       u => toast.info(`${u.username} left`,   { autoClose:1200 }));
     socket.on('language-update', l => setLang(l));
     socket.on('file-content',    onFileContent);
     socket.on('files-list',      onFilesList);
     socket.on('file-deleted',    onFileDeleted);
-    socket.on('error',           e => toast.error(e.message));
+    socket.on('user-switched-file', u => { /* user switched file, no toast needed */ });
+    socket.on('error',           e => toast.error(e.message, { autoClose:1500 }));
 
     return () => {
       ['document-state','code-synced','users-update','user-joined','user-left',
-       'language-update','file-content','files-list','file-deleted','error'].forEach(ev => socket.off(ev));
+       'language-update','file-content','files-list','file-deleted','user-switched-file','error'].forEach(ev => socket.off(ev));
       if (syncTimer.current) clearTimeout(syncTimer.current);
     };
   }, [roomId, username, userId, isCreator]);
