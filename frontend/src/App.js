@@ -993,8 +993,8 @@ function EditorPage({ roomId, username, userId, isCreator, onLeaveRoom }) {
         </div>
       </div>
 
-      <ToastContainer position="bottom-right" autoClose={3000} hideProgressBar={false}
-        newestOnTop closeOnClick pauseOnFocusLoss={false} draggable pauseOnHover theme="dark" limit={3} closeButton={false}/>
+      <ToastContainer position="bottom-right" autoClose={1500} hideProgressBar={false}
+        newestOnTop closeOnClick pauseOnFocusLoss={false} draggable pauseOnHover={false} theme="dark" limit={3} closeButton={false}/>
     </div>
   );
 }
