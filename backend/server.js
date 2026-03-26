@@ -45,15 +45,17 @@ let aiStatus = { status: 'unknown', model: null };
 const setAI  = (s, m = null) => { aiStatus = { status: s, model: m }; };
 
 // ── OPENROUTER AI ─────────────────────────────────────────
-// OpenRouter gives access to many models. Free models as of March 2025:
-//   google/gemini-2.0-flash-lite-001
-//   meta-llama/llama-3.2-3b-instruct
-//   microsoft/phi-3-mini-128k-instruct
+// OpenRouter gives access to many free models.
 // Get your free API key at: https://openrouter.ai
+// Add to Render environment variables as: OPENROUTER_API_KEY
+//
+// Free models tried in order (fastest/most reliable first):
 const OR_MODELS = [
-  'google/gemini-2.0-flash-lite-001',
-  'meta-llama/llama-3.2-3b-instruct',
-  'microsoft/phi-3-mini-128k-instruct'
+  'meta-llama/llama-3.1-8b-instruct:free',
+  'deepseek/deepseek-r1:free',
+  'google/gemma-3-1b-it:free',
+  'mistralai/mistral-7b-instruct:free',
+  'openchat/openchat-7b:free'
 ];
 
 async function callAI(systemPrompt, userPrompt, apiKey) {
@@ -105,7 +107,7 @@ async function callAI(systemPrompt, userPrompt, apiKey) {
   throw lastErr || new Error('All AI models unavailable');
 }
 
-// ── DOCUMENT (unchanged) ──────────────────────────────────────────────
+// ── DOCUMENT ──────────────────────────────────────────────
 class Document {
   constructor(content = '', language = 'javascript') {
     this.content = content; this.language = language; this.version = 0;
