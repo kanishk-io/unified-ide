@@ -21,25 +21,25 @@ const API_URL    = process.env.REACT_APP_API_URL    || 'http://localhost:5000/ap
 const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000';
 
 const socket = io(SOCKET_URL, {
-  transports: ['websocket', 'polling'],
+  transports: ['websocket','polling'],
   reconnection: true, reconnectionAttempts: 10,
   reconnectionDelay: 1000, timeout: 20000
 });
 
 const LANGUAGE_OPTIONS = [
-  { id:'javascript', name:'JavaScript', extension:'js' },
-  { id:'python',     name:'Python',     extension:'py' },
-  { id:'java',       name:'Java',       extension:'java' },
-  { id:'cpp',        name:'C++',        extension:'cpp' },
-  { id:'c',          name:'C',          extension:'c'   },
-  { id:'csharp',     name:'C#',         extension:'cs'  },
-  { id:'php',        name:'PHP',        extension:'php' },
-  { id:'ruby',       name:'Ruby',       extension:'rb'  },
-  { id:'go',         name:'Go',         extension:'go'  },
-  { id:'rust',       name:'Rust',       extension:'rs'  },
-  { id:'typescript', name:'TypeScript', extension:'ts'  },
-  { id:'html',       name:'HTML',       extension:'html'},
-  { id:'css',        name:'CSS',        extension:'css' }
+  {id:'javascript',name:'JavaScript',extension:'js'},
+  {id:'python',    name:'Python',    extension:'py'},
+  {id:'java',      name:'Java',      extension:'java'},
+  {id:'cpp',       name:'C++',       extension:'cpp'},
+  {id:'c',         name:'C',         extension:'c'},
+  {id:'csharp',    name:'C#',        extension:'cs'},
+  {id:'php',       name:'PHP',       extension:'php'},
+  {id:'ruby',      name:'Ruby',      extension:'rb'},
+  {id:'go',        name:'Go',        extension:'go'},
+  {id:'rust',      name:'Rust',      extension:'rs'},
+  {id:'typescript',name:'TypeScript',extension:'ts'},
+  {id:'html',      name:'HTML',      extension:'html'},
+  {id:'css',       name:'CSS',       extension:'css'}
 ];
 
 const EXT_TO_LANG = {
@@ -50,25 +50,24 @@ const EXT_TO_LANG = {
   ts:'typescript', tsx:'typescript', html:'html', htm:'html', css:'css'
 };
 
-// Languages that can't be run in a terminal execution environment
-const NO_EXEC_LANGS = new Set(['html', 'css']);
+// Languages that can't be run in a terminal
+const NO_EXEC_LANGS = new Set(['html','css']);
 
 function getFileLang(name) {
-  const p = name.split('.');
-  if (p.length < 2) return null;
-  return EXT_TO_LANG[p[p.length - 1].toLowerCase()] || null;
+  const p = name.split('.'); if (p.length < 2) return null;
+  return EXT_TO_LANG[p[p.length-1].toLowerCase()] || null;
 }
 function isLangLocked(name) { return getFileLang(name) !== null; }
 
 function timeAgo(date) {
   const s = Math.floor((Date.now() - new Date(date)) / 1000);
   if (s < 60) return 'just now';
-  const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
+  const m = Math.floor(s/60); if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m/60); if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h/24)}d ago`;
 }
 
-// Count how many input() / cin / scanf calls exist in the code
+// Count input calls in code
 function countInputCalls(code, language) {
   const patterns = {
     python:     /\binput\s*\(/g,
@@ -85,7 +84,7 @@ function countInputCalls(code, language) {
   return (code.match(new RegExp(rx.source, rx.flags)) || []).length;
 }
 
-// Extract prompt text from Python input("...") calls
+// Extract Python prompt texts
 function extractPyPrompts(code) {
   const out = [];
   const rx  = /\binput\s*\(\s*(?:f?['"]{1,3})([\s\S]*?)(?:['"]{1,3})\s*\)/g;
@@ -104,11 +103,11 @@ const AI_MAP = {
 };
 function AiDot({ status }) {
   const { c, t } = AI_MAP[status] || AI_MAP.unknown;
-  return <span className="ai-dot" title={t} style={{ background: c, boxShadow: `0 0 7px ${c}` }} />;
+  return <span className="ai-dot" title={t} style={{ background:c, boxShadow:`0 0 7px ${c}` }}/>;
 }
 
 // ══════════════════════════════════════════════════════════
-// INTRO ANIMATION
+// INTRO ANIMATION (from old stable version)
 // ══════════════════════════════════════════════════════════
 function IntroScreen({ onDone }) {
   const [phase, setPhase] = useState('in');
@@ -134,7 +133,7 @@ function IntroScreen({ onDone }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// AUTH PAGES
+// AUTH PAGES (from old stable version – unchanged)
 // ══════════════════════════════════════════════════════════
 function LandingPage({ onNavigate, user, onLogout, onJoinRoom }) {
   const [rooms, setRooms]  = useState([]);
@@ -336,7 +335,7 @@ function JoinRoomPage({ onBack, onJoinRoom, user }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// LANGUAGE SELECTOR (locks when file has a known extension)
+// LANGUAGE SELECTOR (unchanged from old)
 // ══════════════════════════════════════════════════════════
 function LanguageSelector({ current, onChange, locked }) {
   const [open, setOpen] = useState(false);
@@ -372,7 +371,7 @@ function LanguageSelector({ current, onChange, locked }) {
 }
 
 // ══════════════════════════════════════════════════════════
-// FILE SYSTEM
+// FILE SYSTEM (unchanged from old)
 // ══════════════════════════════════════════════════════════
 function FileSystemSection({ roomId, currentFile, onFileSelect, onFileDelete, socket: sp, files: propFiles }) {
   const [files, setFiles]   = useState(['main.js']);
@@ -445,7 +444,7 @@ function FileSystemSection({ roomId, currentFile, onFileSelect, onFileDelete, so
 }
 
 // ══════════════════════════════════════════════════════════
-// AI ASSISTANT — with Clear button
+// AI ASSISTANT — with Clear button (from new version)
 // ══════════════════════════════════════════════════════════
 function AISection({ aiPrompt, setAiPrompt, aiResponse, setAiResponse, onGenerate, isAnalyzing, aiStatus }) {
   const [expanded, setExp] = useState(true);
@@ -495,15 +494,7 @@ function AISection({ aiPrompt, setAiPrompt, aiResponse, setAiResponse, onGenerat
 }
 
 // ══════════════════════════════════════════════════════════
-// TERMINAL
-//
-// For HTML/CSS: show export message, no run.
-// For executable languages:
-//   - Detect how many input() / cin >> calls exist
-//   - If inputs needed: collect them one-by-one interactively
-//     (like the earlier "pretty" style — Enter first number: [typed value])
-//     then run with all collected stdin
-//   - If no inputs: run immediately
+// TERMINAL — interactive, step‑by‑step input (from new version)
 // ══════════════════════════════════════════════════════════
 const TerminalComponent = forwardRef(function TerminalComponent({ code, language }, ref) {
   // mode: idle | collecting | running | done
@@ -695,7 +686,7 @@ const TerminalComponent = forwardRef(function TerminalComponent({ code, language
 });
 
 // ══════════════════════════════════════════════════════════
-// EDITOR PAGE
+// EDITOR PAGE (stable core from old version, but with updated AI and terminal)
 // ══════════════════════════════════════════════════════════
 function EditorPage({ roomId, username, userId, isCreator, onLeaveRoom }) {
   const [fileContents, setFC] = useState({ 'main.js': '// Start coding here...' });
@@ -804,6 +795,7 @@ function EditorPage({ roomId, username, userId, isCreator, onLeaveRoom }) {
   const leaveRoom = () => { socket.disconnect(); onLeaveRoom(); };
   const langLocked = isLangLocked(currentFile);
 
+  // Socket handlers (stable from old version)
   useEffect(() => {
     socketRef.current = socket;
     socket.emit('join-room', { roomId, username, userId, isCreator });
