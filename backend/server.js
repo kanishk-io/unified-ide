@@ -126,7 +126,7 @@ class Document {
     this.currentFile = 'main.js'; this.clientCursors = new Map();
     this._persisted = false;
   }
-  getState() { return { content: this.content, language: this.language, version: this.version }; }
+  getState() { return { content: this.content, language: this.language, version: this.version, currentFile: this.currentFile }; }
   updateContent(content, file) {
     const f = file || this.currentFile;
     this.content = content; this.files.set(f, content); this.version++;

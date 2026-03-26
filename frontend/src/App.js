@@ -839,8 +839,12 @@ function EditorPage({ roomId, username, userId, isCreator, onLeaveRoom }) {
 
     const onDocState = s => {
       remoteRef.current = true;
-      setFC(prev => { const u = { ...prev, [curFileRef.current]: s.content }; fcRef.current = u; return u; });
-      setCode(s.content); if (s.language) setLang(s.language);
+      const fileToUpdate = s.currentFile || curFileRef.current || 'main.js';
+      setFC(prev => { const u = { ...prev, [fileToUpdate]: s.content }; fcRef.current = u; return u; });
+      setCF(fileToUpdate);
+      curFileRef.current = fileToUpdate;
+      setCode(s.content);
+      if (s.language) setLang(s.language);
       setTimeout(() => { remoteRef.current = false; }, 100);
     };
     const onCodeSynced = ({ code: rc, username: ru, fileName: rf }) => {
