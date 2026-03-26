@@ -841,3 +841,8 @@ body {
   height: 2px;
   border-radius: 2px;
 }
+.Toastify__close-button {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}

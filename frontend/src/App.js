@@ -233,7 +233,7 @@ function AuthPage({ mode, onBack, onSuccess, onSwitch }) {
   const handle = async e => {
     e.preventDefault(); setError(''); setLoading(true);
     const r = isReg ? await register(username, email, password) : await login(email, password);
-    if (r.success) { toast.success(isReg ? 'Account created!' : 'Welcome back!'); onSuccess(r.data.user, 'landing'); }
+    if (r.success) { toast.success(isReg ? 'Account created!' : 'Welcome back!', { autoClose: 1200 }); onSuccess(r.data.user, 'landing'); }
     else setError(r.error);
     setLoading(false);
   };
@@ -1032,7 +1032,7 @@ export default function App() {
     join:     <JoinRoomPage   onBack={() => setView('landing')} onJoinRoom={joinRoom} user={user}/>,
     editor:   <EditorPage roomId={room} username={uname} userId={uid} isCreator={creator} onLeaveRoom={leaveRoom}/>,
     landing:  <LandingPage onNavigate={navigate} user={user}
-                onLogout={() => { logout(); setView('landing'); toast.success('Logged out'); }}
+                onLogout={() => { logout(); setView('landing'); toast.success('Logged out', { autoClose: 1200 }); }}
                 onJoinRoom={joinRoom}/>
   };
   return pages[view] || pages.landing;
